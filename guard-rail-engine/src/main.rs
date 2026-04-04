@@ -1,6 +1,8 @@
 mod config;
 mod routes;
 mod policy;
+mod logging;
+mod proxy;
 
 use axum::{Router, routing::get};
 use tokio::net::TcpListener;
