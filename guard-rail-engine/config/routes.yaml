@@ -1,0 +1,14 @@
+routes:
+  - id: transfer-api
+    path: /v1/execute/transfer-api
+    upstream: https://internal-bank.za/api/v1/transfer
+    methods: [POST, PUT]
+    policies: [block-external-callbacks, pii-detection]
+    timeout_ms: 5000
+
+  - id: partner-webhook
+    path: /v1/execute/partner-webhook
+    upstream: https://erp.internal/webhooks/partner
+    methods: [POST]
+    policies: [payload-size-limit]
+    timeout_ms: 3000

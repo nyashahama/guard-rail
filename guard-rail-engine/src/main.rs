@@ -1,4 +1,5 @@
 mod config;
+mod routes;
 
 use axum::{Router, routing::get};
 use tokio::net::TcpListener;
