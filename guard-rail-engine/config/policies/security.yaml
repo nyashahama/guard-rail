@@ -1,0 +1,27 @@
+policies:
+  - name: block-external-callbacks
+    description: Block payloads with callback URLs outside allowlist
+    rules:
+      - field: "$.callback"
+        condition: domain_not_in
+        values: ["*.guardrail.co.za", "*.internal.bank.za"]
+        action: block
+        severity: critical
+
+  - name: pii-detection
+    description: Block payloads containing South African ID numbers
+    rules:
+      - field: "$..*.value"
+        condition: regex_match
+        pattern: "\\b\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{4}[01]\\d{2}\\b"
+        action: block
+        severity: critical
+
+  - name: payload-size-limit
+    description: Reject oversized payloads
+    rules:
+      - field: "$"
+        condition: size_exceeds
+        max_bytes: 102400
+        action: block
+        severity: warning
