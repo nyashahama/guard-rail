@@ -24,28 +24,20 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 0px;
-  background: transparent;
-}
-
-/* Snap Architecture */
-.deck-container {
-  height: 100vh;
-  overflow-y: scroll;
-  scroll-snap-type: y mandatory;
+/* Smooth scroll for anchor links */
+html {
   scroll-behavior: smooth;
 }
 
-.slide {
-  height: 100vh;
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
 }
 
 /* Background Grid */
@@ -61,56 +53,6 @@
   -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 80%);
 }
 
-.bg-radial-glow {
-  background: radial-gradient(circle at center, rgba(0, 240, 255, 0.15) 0%, transparent 60%);
-}
-
-/* Micro-Animations */
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
-}
-
-.pulse-element {
-  position: relative;
-}
-
-.pulse-element::before {
-  content: "";
-  position: absolute;
-  inset: -10px;
-  border: 1px solid #00f0ff;
-  border-radius: inherit;
-  animation: pulse-ring 3s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-}
-
-@keyframes scanline {
-  0% {
-    transform: translateY(-100%);
-  }
-  100% {
-    transform: translateY(100vh);
-  }
-}
-
-.scan-effect::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 200px;
-  background: linear-gradient(to bottom, transparent, rgba(0, 240, 255, 0.05), transparent);
-  animation: scanline 8s linear infinite;
-  pointer-events: none;
-}
-
 /* Glass Panel */
 .glass-panel {
   background: rgba(12, 12, 16, 0.6);
@@ -119,31 +61,73 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* Text Glow */
-.text-glow {
-  text-shadow: 0 0 40px rgba(0, 240, 255, 0.3);
+/* Nav glass — only visible when scrolled */
+.nav-glass {
+  background: rgba(3, 3, 5, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* Map dots animation */
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.3;
-    transform: scale(0.8);
-  }
+/* Scroll-triggered fade-in */
+.fade-in-section {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease-out, transform 0.7s ease-out;
 }
-.map-node {
-  animation: blink 3s infinite ease-in-out;
+
+.fade-in-section.is-visible {
+  opacity: 1;
+  transform: translateY(0);
 }
-.map-node:nth-child(2) {
-  animation-delay: 1s;
+
+/* Staggered children animation */
+.stagger-children > * {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.5s ease-out, transform 0.5s ease-out;
 }
-.map-node:nth-child(3) {
-  animation-delay: 2s;
+
+.stagger-children.is-visible > *:nth-child(1) { transition-delay: 0ms; opacity: 1; transform: translateY(0); }
+.stagger-children.is-visible > *:nth-child(2) { transition-delay: 100ms; opacity: 1; transform: translateY(0); }
+.stagger-children.is-visible > *:nth-child(3) { transition-delay: 200ms; opacity: 1; transform: translateY(0); }
+.stagger-children.is-visible > *:nth-child(4) { transition-delay: 300ms; opacity: 1; transform: translateY(0); }
+.stagger-children.is-visible > *:nth-child(5) { transition-delay: 400ms; opacity: 1; transform: translateY(0); }
+
+/* Terminal cursor blink */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink-cursor 1s step-end infinite;
+}
+
+/* Architecture flow node glow */
+@keyframes node-glow {
+  0% { box-shadow: 0 0 0 rgba(0, 240, 255, 0); }
+  50% { box-shadow: 0 0 30px rgba(0, 240, 255, 0.3); }
+  100% { box-shadow: 0 0 0 rgba(0, 240, 255, 0); }
+}
+
+.node-active {
+  animation: node-glow 2s ease-in-out infinite;
+}
+
+/* Flow line draw animation */
+@keyframes draw-line {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
+}
+
+.flow-line {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+}
+
+.flow-line.is-visible {
+  animation: draw-line 1s ease-out forwards;
 }
 
 body {
