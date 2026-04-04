@@ -3,6 +3,14 @@ name = "guard-rail-engine"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "guard-rail-engine"
+path = "src/main.rs"
+
+[lib]
+name = "guard_rail_engine"
+path = "src/lib.rs"
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
