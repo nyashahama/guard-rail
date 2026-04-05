@@ -28,7 +28,7 @@ export function Problem() {
           {/* Left — Copy */}
           <div>
             <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-crimson block mb-4">
-              // Risk Vector
+              {"// Risk Vector"}
             </span>
             <h2
               className="font-extrabold tracking-[-0.025em] leading-[1.0] mb-6"

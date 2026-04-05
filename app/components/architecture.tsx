@@ -29,7 +29,7 @@ export function Architecture() {
           {/* Left */}
           <div>
             <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
-              // Policy Engine
+              {"// Policy Engine"}
             </span>
             <h2
               className="font-extrabold tracking-[-0.025em] leading-[1.0]"

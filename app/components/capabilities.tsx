@@ -25,7 +25,7 @@ export function Capabilities() {
     <section id="how" className="relative z-[1]">
       <div ref={ref} className="px-20 py-[120px] max-w-[1400px] mx-auto">
         <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
-          // The Primitive
+          {"// The Primitive"}
         </span>
         <h2
           className="font-extrabold tracking-[-0.025em] leading-[1.0]"

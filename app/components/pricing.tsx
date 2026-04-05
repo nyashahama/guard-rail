@@ -27,7 +27,7 @@ export function Pricing() {
       <section id="pricing" className="relative z-[1]">
         <div ref={ref} className="px-20 py-[120px] max-w-[1400px] mx-auto">
           <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
-            // Value Extraction
+            {"// Value Extraction"}
           </span>
           <h2
             className="font-extrabold tracking-[-0.025em] leading-[1.0]"
@@ -65,7 +65,7 @@ export function Pricing() {
               <ul className="flex-1 flex flex-col gap-3.5 mb-9 list-none">
                 {["1 Sandbox Environment", "Up to 1M executions", "14-day log retention"].map((f) => (
                   <li key={f} className="font-mono text-[12px] text-white/55 flex items-start gap-2.5 leading-[1.5]">
-                    <span className="text-cyan/60 flex-shrink-0">//</span>
+                    <span className="text-cyan/60 flex-shrink-0">{"/"}/</span>
                     {f}
                   </li>
                 ))}
@@ -118,7 +118,7 @@ export function Pricing() {
                   "Cryptographic auditing SDK",
                 ].map((f) => (
                   <li key={f} className="font-mono text-[12px] text-white/55 flex items-start gap-2.5 leading-[1.5]">
-                    <span className="text-cyan/60 flex-shrink-0">//</span>
+                    <span className="text-cyan/60 flex-shrink-0">{"/"}/</span>
                     {f}
                   </li>
                 ))}
@@ -155,7 +155,7 @@ export function Pricing() {
               <ul className="flex-1 flex flex-col gap-3.5 mb-9 list-none">
                 {["White-labeled runtime", "Embed in your iPaaS", "Source code escrow"].map((f) => (
                   <li key={f} className="font-mono text-[12px] text-white/55 flex items-start gap-2.5 leading-[1.5]">
-                    <span className="text-cyan/60 flex-shrink-0">//</span>
+                    <span className="text-cyan/60 flex-shrink-0">{"/"}/</span>
                     {f}
                   </li>
                 ))}

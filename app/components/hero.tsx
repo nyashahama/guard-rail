@@ -30,7 +30,7 @@ export function Hero() {
 
           <p className="text-[19px] text-white/55 leading-[1.65] font-light max-w-[480px] mb-11">
             The enterprise-grade runtime engine. Sandboxing partner integrations,
-            workflows, and AI agents for South Africa's critical financial
+            workflows, and AI agents for South Africa&apos;s critical financial
             infrastructure.
           </p>
 
