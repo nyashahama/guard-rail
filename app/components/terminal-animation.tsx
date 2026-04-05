@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useReducer } from "react";
 
 interface TerminalLine {
   text: string;
@@ -29,25 +29,30 @@ const SEQUENCE: TerminalLine[] = [
 
 const CYCLE_DURATION = 8000;
 
+type State = { cycle: number; visibleLines: number };
+type Action = { type: "show_line"; line: number } | { type: "restart" };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "show_line": return { ...state, visibleLines: action.line };
+    case "restart": return { cycle: state.cycle + 1, visibleLines: 0 };
+  }
+}
+
 export function TerminalAnimation() {
-  const [visibleLines, setVisibleLines] = useState<number>(0);
-  const [cycle, setCycle] = useState(0);
+  const [{ cycle, visibleLines }, dispatch] = useReducer(reducer, { cycle: 0, visibleLines: 0 });
 
   useEffect(() => {
-    setVisibleLines(0);
-
     const timers: ReturnType<typeof setTimeout>[] = [];
 
     SEQUENCE.forEach((line, i) => {
       timers.push(
-        setTimeout(() => setVisibleLines(i + 1), line.delay)
+        setTimeout(() => dispatch({ type: "show_line", line: i + 1 }), line.delay)
       );
     });
 
     timers.push(
-      setTimeout(() => {
-        setCycle((c) => c + 1);
-      }, CYCLE_DURATION)
+      setTimeout(() => dispatch({ type: "restart" }), CYCLE_DURATION)
     );
 
     return () => timers.forEach(clearTimeout);

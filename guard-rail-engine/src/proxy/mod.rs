@@ -2,8 +2,8 @@ pub mod forward;
 pub mod response;
 
 use crate::logging::ExecutionLog;
-use crate::policy::engine::{evaluate, Verdict};
 use crate::policy::PolicySet;
+use crate::policy::engine::{Verdict, evaluate};
 use crate::routes::RouteTable;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, State};

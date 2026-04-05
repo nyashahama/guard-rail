@@ -50,7 +50,9 @@ fn extract_domain(val: &serde_json::Value) -> Option<String> {
 fn domain_not_in(values: &[serde_json::Value], allowlist: &[String]) -> Result<bool, String> {
     for val in values {
         if let Some(domain) = extract_domain(val) {
-            let allowed = allowlist.iter().any(|pat| domain_matches_glob(&domain, pat));
+            let allowed = allowlist
+                .iter()
+                .any(|pat| domain_matches_glob(&domain, pat));
             if !allowed {
                 return Ok(true);
             }
@@ -62,7 +64,9 @@ fn domain_not_in(values: &[serde_json::Value], allowlist: &[String]) -> Result<b
 fn domain_in(values: &[serde_json::Value], blocklist: &[String]) -> Result<bool, String> {
     for val in values {
         if let Some(domain) = extract_domain(val) {
-            let blocked = blocklist.iter().any(|pat| domain_matches_glob(&domain, pat));
+            let blocked = blocklist
+                .iter()
+                .any(|pat| domain_matches_glob(&domain, pat));
             if blocked {
                 return Ok(true);
             }
@@ -97,7 +101,10 @@ fn regex_not_match(values: &[serde_json::Value], pattern: Option<&str>) -> Resul
     Ok(false)
 }
 
-fn equals(values: &[serde_json::Value], target: &Option<serde_json::Value>) -> Result<bool, String> {
+fn equals(
+    values: &[serde_json::Value],
+    target: &Option<serde_json::Value>,
+) -> Result<bool, String> {
     let target = target.as_ref().ok_or("equals requires 'value' parameter")?;
     for val in values {
         if val == target {
@@ -107,8 +114,13 @@ fn equals(values: &[serde_json::Value], target: &Option<serde_json::Value>) -> R
     Ok(false)
 }
 
-fn not_equals(values: &[serde_json::Value], target: &Option<serde_json::Value>) -> Result<bool, String> {
-    let target = target.as_ref().ok_or("not_equals requires 'value' parameter")?;
+fn not_equals(
+    values: &[serde_json::Value],
+    target: &Option<serde_json::Value>,
+) -> Result<bool, String> {
+    let target = target
+        .as_ref()
+        .ok_or("not_equals requires 'value' parameter")?;
     for val in values {
         if val != target {
             return Ok(true);
@@ -117,7 +129,10 @@ fn not_equals(values: &[serde_json::Value], target: &Option<serde_json::Value>) 
     Ok(false)
 }
 
-fn contains_check(values: &[serde_json::Value], target: &Option<serde_json::Value>) -> Result<bool, String> {
+fn contains_check(
+    values: &[serde_json::Value],
+    target: &Option<serde_json::Value>,
+) -> Result<bool, String> {
     let target_str = target
         .as_ref()
         .and_then(|v| v.as_str())
@@ -132,7 +147,10 @@ fn contains_check(values: &[serde_json::Value], target: &Option<serde_json::Valu
     Ok(false)
 }
 
-fn not_contains_check(values: &[serde_json::Value], target: &Option<serde_json::Value>) -> Result<bool, String> {
+fn not_contains_check(
+    values: &[serde_json::Value],
+    target: &Option<serde_json::Value>,
+) -> Result<bool, String> {
     let target_str = target
         .as_ref()
         .and_then(|v| v.as_str())

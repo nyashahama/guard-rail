@@ -24,10 +24,7 @@ pub async fn forward_request(
 
     // Add Guard Rail headers
     if let Ok(val) = HeaderValue::from_str(execution_id) {
-        headers.insert(
-            HeaderName::from_static("x-guardrail-execution-id"),
-            val,
-        );
+        headers.insert(HeaderName::from_static("x-guardrail-execution-id"), val);
     }
     headers.insert(
         HeaderName::from_static("x-guardrail-verdict"),

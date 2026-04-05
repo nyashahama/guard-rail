@@ -47,12 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("Loading routes from {}", app_config.routes_file);
-    let route_table =
-        routes::RouteTable::load(&PathBuf::from(&app_config.routes_file))?;
+    let route_table = routes::RouteTable::load(&PathBuf::from(&app_config.routes_file))?;
 
     tracing::info!("Loading policies from {}", app_config.policies_dir);
-    let policy_set =
-        policy::PolicySet::load_dir(&PathBuf::from(&app_config.policies_dir))?;
+    let policy_set = policy::PolicySet::load_dir(&PathBuf::from(&app_config.policies_dir))?;
 
     // Validate that all route policy references exist
     let required_policies = route_table.policy_names();
@@ -94,11 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .with_state(state);
 
-    let addr: SocketAddr = format!(
-        "{}:{}",
-        app_config.server.host, app_config.server.port
-    )
-    .parse()?;
+    let addr: SocketAddr =
+        format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
 
     tracing::info!("Guard Rail Engine starting on {}", addr);
 

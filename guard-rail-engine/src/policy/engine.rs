@@ -1,4 +1,4 @@
-use super::conditions::{evaluate_condition, ConditionParams};
+use super::conditions::{ConditionParams, evaluate_condition};
 use super::{Policy, PolicySet};
 use jsonpath_rust::JsonPath;
 use std::str::FromStr;
@@ -172,7 +172,11 @@ mod tests {
         let payload = json!({"callback": "https://evil.sh/exfil", "amount": 100});
         let verdict = evaluate(&payload, 50, &["block-callbacks".to_string()], &set);
         match verdict {
-            Verdict::Block { policy_name, rule_field, .. } => {
+            Verdict::Block {
+                policy_name,
+                rule_field,
+                ..
+            } => {
                 assert_eq!(policy_name, "block-callbacks");
                 assert_eq!(rule_field, "$.callback");
             }
@@ -185,7 +189,8 @@ mod tests {
         let set = make_policy_set(vec![simple_domain_policy(), size_policy()]);
         let payload = json!({"callback": "https://evil.sh/exfil"});
         let verdict = evaluate(
-            &payload, 50,
+            &payload,
+            50,
             &["block-callbacks".to_string(), "size-limit".to_string()],
             &set,
         );
@@ -202,7 +207,8 @@ mod tests {
         let set = make_policy_set(vec![simple_domain_policy(), size_policy()]);
         let payload = json!({"callback": "https://api.safe.com/hook"});
         let verdict = evaluate(
-            &payload, 50,
+            &payload,
+            50,
             &["block-callbacks".to_string(), "size-limit".to_string()],
             &set,
         );

@@ -59,14 +59,11 @@ impl PolicySet {
                 || path.extension().and_then(|e| e.to_str()) == Some("yml")
             {
                 let contents = std::fs::read_to_string(&path)?;
-                let file: PoliciesFile = serde_yaml::from_str(&contents).map_err(|e| {
-                    format!("Failed to parse {}: {}", path.display(), e)
-                })?;
+                let file: PoliciesFile = serde_yaml::from_str(&contents)
+                    .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
                 for policy in file.policies {
                     if by_name.contains_key(&policy.name) {
-                        return Err(
-                            format!("Duplicate policy name: {}", policy.name).into()
-                        );
+                        return Err(format!("Duplicate policy name: {}", policy.name).into());
                     }
                     by_name.insert(policy.name.clone(), policy);
                 }
