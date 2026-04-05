@@ -14,6 +14,7 @@ pub struct PoliciesFile {
 pub struct Policy {
     pub name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub description: String,
     pub rules: Vec<Rule>,
 }
@@ -30,8 +31,10 @@ pub struct Rule {
     pub pattern: Option<String>,
     #[serde(default)]
     pub max_bytes: Option<usize>,
+    #[allow(dead_code)]
     pub action: String,
     #[serde(default = "default_severity")]
+    #[allow(dead_code)]
     pub severity: String,
 }
 

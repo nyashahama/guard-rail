@@ -1,7 +1,7 @@
 use crate::policy::PolicySet;
 use crate::routes::RouteTable;
 use notify::{EventKind, RecursiveMode, Watcher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -49,8 +49,8 @@ pub fn start_watcher(
 }
 
 async fn reload_all(
-    routes_path: &PathBuf,
-    policies_path: &PathBuf,
+    routes_path: &Path,
+    policies_path: &Path,
     routes: &Arc<RwLock<RouteTable>>,
     policies: &Arc<RwLock<PolicySet>>,
 ) {

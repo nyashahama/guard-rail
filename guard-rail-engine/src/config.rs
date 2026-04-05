@@ -25,6 +25,7 @@ fn default_body_limit() -> usize {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ForwardingConfig {
     #[serde(default = "default_timeout")]
+    #[allow(dead_code)]
     pub default_timeout_ms: u64,
     #[serde(default = "default_user_agent")]
     pub user_agent: String,

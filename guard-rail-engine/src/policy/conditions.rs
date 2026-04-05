@@ -79,10 +79,10 @@ fn regex_match(values: &[serde_json::Value], pattern: Option<&str>) -> Result<bo
     let pat = pattern.ok_or("regex_match requires 'pattern' parameter")?;
     let re = Regex::new(pat).map_err(|e| format!("Invalid regex: {}", e))?;
     for val in values {
-        if let Some(s) = val.as_str() {
-            if re.is_match(s) {
-                return Ok(true);
-            }
+        if let Some(s) = val.as_str()
+            && re.is_match(s)
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -92,10 +92,10 @@ fn regex_not_match(values: &[serde_json::Value], pattern: Option<&str>) -> Resul
     let pat = pattern.ok_or("regex_not_match requires 'pattern' parameter")?;
     let re = Regex::new(pat).map_err(|e| format!("Invalid regex: {}", e))?;
     for val in values {
-        if let Some(s) = val.as_str() {
-            if !re.is_match(s) {
-                return Ok(true);
-            }
+        if let Some(s) = val.as_str()
+            && !re.is_match(s)
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -138,10 +138,10 @@ fn contains_check(
         .and_then(|v| v.as_str())
         .ok_or("contains requires 'value' parameter (string)")?;
     for val in values {
-        if let Some(s) = val.as_str() {
-            if s.contains(target_str) {
-                return Ok(true);
-            }
+        if let Some(s) = val.as_str()
+            && s.contains(target_str)
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -156,10 +156,10 @@ fn not_contains_check(
         .and_then(|v| v.as_str())
         .ok_or("not_contains requires 'value' parameter (string)")?;
     for val in values {
-        if let Some(s) = val.as_str() {
-            if !s.contains(target_str) {
-                return Ok(true);
-            }
+        if let Some(s) = val.as_str()
+            && !s.contains(target_str)
+        {
+            return Ok(true);
         }
     }
     Ok(false)

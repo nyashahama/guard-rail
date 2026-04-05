@@ -10,6 +10,7 @@ pub struct RoutesConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Route {
     pub id: String,
+    #[allow(dead_code)]
     pub path: String,
     pub upstream: String,
     pub methods: Vec<String>,

@@ -77,10 +77,10 @@ pub async fn forward_request(
 fn reqwest_headers(axum_headers: &HeaderMap) -> reqwest::header::HeaderMap {
     let mut headers = reqwest::header::HeaderMap::new();
     for (key, value) in axum_headers.iter() {
-        if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_ref()) {
-            if let Ok(val) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
-                headers.insert(name, val);
-            }
+        if let Ok(name) = reqwest::header::HeaderName::from_bytes(key.as_ref())
+            && let Ok(val) = reqwest::header::HeaderValue::from_bytes(value.as_bytes())
+        {
+            headers.insert(name, val);
         }
     }
     headers
