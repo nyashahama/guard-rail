@@ -1,186 +1,181 @@
 "use client";
 
-import { useState } from "react";
-import { useInView } from "./use-in-view";
-import { LightningIcon, ShieldSmallIcon, ServerIcon } from "./icons";
-
-const TABS = [
-  {
-    label: "Policy (YAML)",
-    content: `# guardrail-policy.yaml
-rules:
-  - name: block-external-callbacks
-    trigger: webhook.inbound
-    match:
-      field: callback
-      condition: domain_not_in
-      values:
-        - "*.guardrail.co.za"
-        - "*.internal.bank.za"
-    action: block
-    severity: critical
-    log: true`,
-  },
-  {
-    label: "Execution Log (JSON)",
-    content: `{
-  "event_id": "GR-EXE-449281",
-  "timestamp": "2026-04-04T14:32:01.004Z",
-  "trigger": "webhook.inbound",
-  "source_ip": "41.13.22.91",
-  "policy": "block-external-callbacks",
-  "verdict": "BLOCKED",
-  "violation_field": "callback",
-  "violation_value": "https://evil.sh/exfil",
-  "hash": "9f3a8b...c7e1",
-  "latency_ms": 0.42
-}`,
-  },
-  {
-    label: "Integration (cURL)",
-    content: `# Route any webhook through Guard Rail
-curl -X POST https://gw.guardrail.co.za/v1/execute \\
-  -H "Authorization: Bearer gr_live_sk_..." \\
-  -H "Content-Type: application/json" \\
-  -d @payload.json`,
-  },
-];
-
 export function Architecture() {
-  const { ref, isVisible } = useInView(0.1);
-  const [activeTab, setActiveTab] = useState(0);
+  const conditions = [
+    "domain_not_in",
+    "domain_in",
+    "regex_match",
+    "regex_not_match",
+    "equals",
+    "not_equals",
+    "contains",
+    "not_contains",
+    "size_exceeds",
+    "field_exists",
+    "field_not_exists",
+  ];
 
   return (
-    <section id="architecture" className="py-32 bg-surface-light">
-      <div className="max-w-7xl mx-auto px-6 lg:px-8">
-        <div
-          ref={ref}
-          className={`fade-in-section ${isVisible ? "is-visible" : ""}`}
-        >
-          <h2 className="text-4xl lg:text-5xl font-bold tracking-tight mb-20 text-center">
-            How it fits into your stack.
-          </h2>
-
-          {/* Flow Diagram */}
-          <div className="flex flex-col md:flex-row items-center justify-center gap-6 lg:gap-12 mb-24">
-            {/* Untrusted Trigger */}
-            <div
-              className={`flex flex-col items-center transition-all duration-700 ${
-                isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-              }`}
+    <section
+      className="relative z-[1]"
+      style={{
+        background: "var(--surface-light)",
+        borderTop: "1px solid rgba(255,255,255,0.04)",
+        borderBottom: "1px solid rgba(255,255,255,0.04)",
+      }}
+    >
+      <div className="px-20 py-[120px] max-w-[1400px] mx-auto">
+        <div className="grid gap-16 items-start" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {/* Left */}
+          <div>
+            <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
+              // Policy Engine
+            </span>
+            <h2
+              className="font-extrabold tracking-[-0.025em] leading-[1.0]"
+              style={{ fontSize: "clamp(40px, 5vw, 72px)" }}
             >
-              <div className="w-20 h-20 rounded-full border border-white/20 bg-surface flex items-center justify-center mb-3">
-                <LightningIcon className="text-white/60 w-6 h-6" />
-              </div>
-              <h4 className="font-bold text-sm mb-1">Untrusted Trigger</h4>
-              <span className="font-mono text-[11px] text-white/40 text-center">
-                Webhook, Partner API,
+              YAML policies.
+              <br />
+              <span className="text-white/28">
+                Version-controlled.
                 <br />
-                AI Agent
+                Hot-reloaded.
               </span>
-            </div>
-
-            {/* Arrow 1 */}
-            <svg
-              className={`hidden md:block w-24 h-4 transition-all duration-700 delay-300 ${
-                isVisible ? "opacity-100" : "opacity-0"
-              }`}
-              viewBox="0 0 96 16"
-            >
-              <line
-                x1="0" y1="8" x2="80" y2="8"
-                stroke="rgba(255,255,255,0.2)"
-                strokeWidth="1.5"
-                className={`flow-line ${isVisible ? "is-visible" : ""}`}
-                style={{ animationDelay: "0.4s" }}
-              />
-              <polygon points="80,3 92,8 80,13" fill="#00F0FF" className={`transition-opacity duration-300 ${isVisible ? "opacity-100" : "opacity-0"}`} style={{ transitionDelay: "1s" }} />
-            </svg>
-
-            {/* Guard Rail (center) */}
-            <div
-              className={`flex flex-col items-center transition-all duration-700 delay-500 ${
-                isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-              }`}
-            >
-              <div className={`w-28 h-28 rounded-2xl glass-panel border-cyan/50 flex flex-col items-center justify-center mb-3 ${isVisible ? "node-active" : ""}`}>
-                <ShieldSmallIcon className="text-cyan w-8 h-8" />
-                <span className="font-mono text-[9px] font-bold tracking-widest uppercase mt-1.5">
-                  Guard Rail
+            </h2>
+            <p className="text-[17px] text-white/55 leading-[1.65] font-light mt-6">
+              Define security rules as YAML files alongside your infrastructure
+              config. Guard Rail watches for changes and reloads without downtime.
+              Bad syntax keeps the previous valid set active.
+            </p>
+            {/* Condition tags */}
+            <div className="flex flex-wrap gap-2 mt-6">
+              {conditions.map((c) => (
+                <span
+                  key={c}
+                  className="font-mono text-[11px] px-3 py-[5px] border border-white/10 text-white/45 tracking-[0.05em] cursor-default transition-colors duration-200 hover:border-cyan/40 hover:text-cyan"
+                >
+                  {c}
                 </span>
-              </div>
-              <div className="flex gap-2 font-mono text-[10px]">
-                <span className="px-2 py-1 bg-surface border border-white/10 rounded">
-                  Inspect
-                </span>
-                <span className="px-2 py-1 bg-surface border border-white/10 rounded">
-                  Enforce
-                </span>
-                <span className="px-2 py-1 bg-surface border border-white/10 rounded">
-                  Log
-                </span>
-              </div>
-            </div>
-
-            {/* Arrow 2 */}
-            <svg
-              className={`hidden md:block w-24 h-4 transition-all duration-700 delay-700 ${
-                isVisible ? "opacity-100" : "opacity-0"
-              }`}
-              viewBox="0 0 96 16"
-            >
-              <line
-                x1="0" y1="8" x2="80" y2="8"
-                stroke="rgba(255,255,255,0.2)"
-                strokeWidth="1.5"
-                className={`flow-line ${isVisible ? "is-visible" : ""}`}
-                style={{ animationDelay: "0.8s" }}
-              />
-              <polygon points="80,3 92,8 80,13" fill="#00FF55" className={`transition-opacity duration-300 ${isVisible ? "opacity-100" : "opacity-0"}`} style={{ transitionDelay: "1.4s" }} />
-            </svg>
-
-            {/* Enterprise Core */}
-            <div
-              className={`flex flex-col items-center transition-all duration-700 delay-1000 ${
-                isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-              }`}
-            >
-              <div className="w-20 h-20 rounded-lg border border-green/30 bg-green/5 flex items-center justify-center mb-3">
-                <ServerIcon className="text-green w-6 h-6" />
-              </div>
-              <h4 className="font-bold text-sm mb-1">Enterprise Core</h4>
-              <span className="font-mono text-[11px] text-white/40 text-center">
-                Internal DBs, Core Systems,
-                <br />
-                ERPs
-              </span>
+              ))}
             </div>
           </div>
 
-          {/* Tabbed Code Block */}
-          <div className="max-w-3xl mx-auto">
-            <div className="bg-void rounded-xl border border-white/10 shadow-2xl overflow-hidden">
-              {/* Tab bar */}
-              <div className="flex border-b border-white/10">
-                {TABS.map((tab, i) => (
-                  <button
-                    key={tab.label}
-                    onClick={() => setActiveTab(i)}
-                    className={`px-5 py-3 font-mono text-xs transition-colors cursor-pointer ${
-                      activeTab === i
-                        ? "text-cyan border-b-2 border-cyan bg-white/5"
-                        : "text-white/40 hover:text-white/60"
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
+          {/* Right — YAML Terminal */}
+          <div
+            className="relative overflow-hidden border border-white/10"
+            style={{
+              background: "var(--surface)",
+            }}
+          >
+            {/* Gradient overlay */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background: "linear-gradient(135deg, rgba(0,240,255,0.04) 0%, transparent 60%)",
+              }}
+            />
+            {/* Terminal bar */}
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b border-white/6"
+              style={{ background: "var(--surface-light)" }}
+            >
+              <div className="flex gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-crimson" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#FFB300]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-green" />
               </div>
-
-              {/* Code content */}
-              <pre className="p-6 font-mono text-[13px] leading-relaxed text-white/70 overflow-x-auto">
-                {TABS[activeTab].content}
-              </pre>
+              <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-white/30">
+                policies/security.yaml
+              </span>
+              <div />
+            </div>
+            {/* Terminal body */}
+            <div className="px-7 py-7 font-mono text-[12.5px] leading-[1.85] overflow-x-auto">
+              <span className="text-white/20"># Block payloads with external callback URLs</span>
+              {"\n"}
+              <span className="text-cyan">policies</span>:{"\n"}
+              <span className="block pl-4">
+                - <span className="text-cyan">name</span>:{" "}
+                <span className="text-green">block-external-callbacks</span>
+              </span>
+              <span className="block pl-8">
+                <span className="text-cyan">rules</span>:
+              </span>
+              <span className="block pl-12">
+                - <span className="text-cyan">field</span>:{" "}
+                <span className="text-green">&quot;$.callback&quot;</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">condition</span>:{" "}
+                <span className="text-[#CF8DFB]">domain_not_in</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">values</span>: [
+                <span className="text-green">&quot;*.internal.bank.za&quot;</span>]
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">action</span>:{" "}
+                <span className="text-[#FFD580]">block</span> ·{" "}
+                <span className="text-cyan">severity</span>:{" "}
+                <span className="text-[#FFD580]">critical</span>
+              </span>
+              {"\n"}
+              <span className="block pl-4">
+                - <span className="text-cyan">name</span>:{" "}
+                <span className="text-green">pii-detection</span>
+              </span>
+              <span className="block pl-8">
+                <span className="text-cyan">description</span>: Block SA ID numbers in payload
+              </span>
+              <span className="block pl-8">
+                <span className="text-cyan">rules</span>:
+              </span>
+              <span className="block pl-12">
+                - <span className="text-cyan">field</span>:{" "}
+                <span className="text-green">&quot;$..**&quot;</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">condition</span>:{" "}
+                <span className="text-[#CF8DFB]">regex_match</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">pattern</span>:{" "}
+                <span className="text-green">&quot;\b\d&#123;13&#125;\b&quot;</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">action</span>:{" "}
+                <span className="text-[#FFD580]">block</span> ·{" "}
+                <span className="text-cyan">severity</span>:{" "}
+                <span className="text-[#FFD580]">critical</span>
+              </span>
+              {"\n"}
+              <span className="block pl-4">
+                - <span className="text-cyan">name</span>:{" "}
+                <span className="text-green">payload-size-limit</span>
+              </span>
+              <span className="block pl-8">
+                <span className="text-cyan">rules</span>:
+              </span>
+              <span className="block pl-12">
+                - <span className="text-cyan">field</span>:{" "}
+                <span className="text-green">&quot;$&quot;</span> ·{" "}
+                <span className="text-cyan">condition</span>:{" "}
+                <span className="text-[#CF8DFB]">size_exceeds</span>
+              </span>
+              <span className="block pl-12">
+                {"  "}
+                <span className="text-cyan">max_bytes</span>:{" "}
+                <span className="text-[#FFD580]">102400</span> ·{" "}
+                <span className="text-cyan">action</span>:{" "}
+                <span className="text-[#FFD580]">block</span>
+              </span>
             </div>
           </div>
         </div>
