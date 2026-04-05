@@ -46,3 +46,6 @@ next-env.d.ts
 .aidesigner/
 .claude/
 .mcp.json
+
+# Internal project docs
+OVERVIEW.md
