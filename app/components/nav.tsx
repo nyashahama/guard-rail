@@ -1,92 +1,43 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { MenuIcon, CloseIcon } from "./icons";
-
-const NAV_LINKS = [
-  { label: "Product", href: "#product" },
-  { label: "Architecture", href: "#architecture" },
-  { label: "Pricing", href: "#pricing" },
-];
-
 export function Nav() {
-  const [scrolled, setScrolled] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 32);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
   return (
     <nav
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? "nav-glass" : "bg-transparent"
-      }`}
+      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-12 h-[68px] mix-blend-difference"
     >
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between h-16">
-        {/* Logo */}
-        <a href="#" className="flex items-center gap-3">
-          <div className="w-6 h-6 border-2 border-cyan flex items-center justify-center rounded-sm">
-            <div className="w-2 h-2 bg-cyan" />
-          </div>
-          <span className="font-bold tracking-widest uppercase text-sm">
-            Guard Rail
-          </span>
-        </a>
-
-        {/* Desktop links */}
-        <div className="hidden md:flex items-center gap-8">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="text-sm text-white/60 hover:text-white transition-colors"
-            >
-              {link.label}
-            </a>
-          ))}
-          <a
-            href="#demo"
-            className="text-sm font-semibold bg-cyan text-black px-5 py-2 rounded-lg hover:bg-white transition-colors"
-          >
-            Request Demo
-          </a>
+      {/* Logo */}
+      <a href="#" className="flex items-center gap-2.5 font-sans font-bold text-[13px] tracking-[0.15em] uppercase no-underline text-white">
+        <div className="w-[26px] h-[26px] border-2 border-cyan flex items-center justify-center rounded-[4px]">
+          <div className="w-2 h-2 bg-cyan" />
         </div>
+        Guard Rail
+      </a>
 
-        {/* Mobile hamburger */}
-        <button
-          className="md:hidden text-white/60 hover:text-white"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          aria-label="Toggle menu"
+      {/* Right side */}
+      <div className="flex items-center gap-8">
+        <ul className="hidden md:flex gap-7 list-none">
+          {[
+            { label: "How It Works", href: "#how" },
+            { label: "Features", href: "#features" },
+            { label: "Pricing", href: "#pricing" },
+          ].map((link) => (
+            <li key={link.href}>
+              <a
+                href={link.href}
+                className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 no-underline hover:text-white transition-colors duration-200"
+              >
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+        <a
+          href="mailto:founders@guardrail.co.za"
+          className="font-mono text-[11px] font-bold tracking-[0.1em] uppercase text-white border border-white/20 px-5 py-2.5 no-underline hover:bg-white hover:text-black transition-all duration-300"
         >
-          {mobileOpen ? <CloseIcon /> : <MenuIcon />}
-        </button>
+          Get Access
+        </a>
       </div>
-
-      {/* Mobile menu */}
-      {mobileOpen && (
-        <div className="md:hidden nav-glass border-t border-white/5 px-6 py-6 flex flex-col gap-4">
-          {NAV_LINKS.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="text-sm text-white/60 hover:text-white transition-colors"
-              onClick={() => setMobileOpen(false)}
-            >
-              {link.label}
-            </a>
-          ))}
-          <a
-            href="#demo"
-            className="text-sm font-semibold bg-cyan text-black px-5 py-2 rounded-lg hover:bg-white transition-colors text-center"
-            onClick={() => setMobileOpen(false)}
-          >
-            Request Demo
-          </a>
-        </div>
-      )}
     </nav>
   );
 }
