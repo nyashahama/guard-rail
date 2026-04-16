@@ -4,6 +4,7 @@ mod policy;
 mod proxy;
 mod reload;
 mod routes;
+mod storage;
 
 use clap::Parser;
 use proxy::AppState;
@@ -15,22 +16,75 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
+#[derive(Debug, Clone, clap::Subcommand)]
+enum Command {
+    Serve,
+    Migrate,
+}
+
+impl Default for Command {
+    fn default() -> Self {
+        Command::Serve
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "guard-rail-engine", about = "Zero-trust execution runtime")]
 struct Cli {
-    /// Path to config.yaml
-    #[arg(short, long, default_value = "./config/config.yaml")]
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[arg(short, long, default_value = "./config/config.yaml", global = true)]
     config: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_migrate_command_parses() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "migrate",
+            "--config",
+            "./config/config.yaml",
+        ])
+        .unwrap();
+
+        assert!(matches!(cli.command, Some(Command::Migrate)));
+        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    fn test_serve_is_default_command() {
+        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Serve)));
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-
-    // Load config
     let app_config = config::AppConfig::load(&cli.config)?;
 
-    // Setup tracing
+    let command = cli.command.unwrap_or_default();
+
+    match command {
+        Command::Migrate => {
+            let pool = storage::postgres::connect_pool(&app_config.database).await?;
+            storage::postgres::run_migrations(&pool).await?;
+            println!("Migrations applied successfully");
+            return Ok(());
+        }
+        Command::Serve => {}
+    }
+
+    let pool = storage::postgres::connect_pool(&app_config.database).await?;
+    storage::postgres::assert_schema_ready(&pool).await?;
+    drop(pool);
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&app_config.logging.level));
 
@@ -52,7 +106,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Loading policies from {}", app_config.policies_dir);
     let policy_set = policy::PolicySet::load_dir(&PathBuf::from(&app_config.policies_dir))?;
 
-    // Validate that all route policy references exist
     let required_policies = route_table.policy_names();
     policy_set
         .validate_references(&required_policies)
@@ -61,7 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Arc::new(RwLock::new(route_table));
     let policies = Arc::new(RwLock::new(policy_set));
 
-    // Start hot-reload watcher
     let reload_routes = Arc::clone(&routes);
     let reload_policies = Arc::clone(&policies);
     reload::start_watcher(
@@ -94,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
-
+ 
     tracing::info!("Guard Rail Engine starting on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
