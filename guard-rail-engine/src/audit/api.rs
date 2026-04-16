@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -44,7 +44,10 @@ pub async fn list_executions(
     State(state): State<crate::proxy::AppState>,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Json<AuditListResponse>, StatusCode> {
-    let store = state.audit_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .audit_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let page = store
         .list_executions(query)
         .await
@@ -56,7 +59,10 @@ pub async fn get_execution(
     State(state): State<crate::proxy::AppState>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ExecutionAuditRow>, StatusCode> {
-    let store = state.audit_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .audit_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let row = store
         .get_execution_by_id(&execution_id)
         .await
@@ -69,7 +75,10 @@ pub async fn verify_integrity(
     State(state): State<crate::proxy::AppState>,
     Query(query): Query<IntegrityQuery>,
 ) -> Result<Json<IntegrityResponse>, StatusCode> {
-    let store = state.audit_store.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let store = state
+        .audit_store
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let result = store
         .verify_integrity(query)
         .await

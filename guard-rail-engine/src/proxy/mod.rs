@@ -42,17 +42,24 @@ impl std::fmt::Debug for AppState {
     }
 }
 
-async fn emit_and_persist(record: ExecutionRecord, audit_store: Option<crate::storage::postgres::PostgresAuditStore>) {
+async fn emit_and_persist(
+    record: ExecutionRecord,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+) {
     ExecutionLog::from(&record).emit();
     if let Some(store) = audit_store {
         let _ = tokio::time::timeout(
             std::time::Duration::from_millis(250),
             store.insert_execution(&record),
-        ).await;
+        )
+        .await;
     }
 }
 
-fn spawn_emit_and_persist(record: ExecutionRecord, audit_store: Option<crate::storage::postgres::PostgresAuditStore>) {
+fn spawn_emit_and_persist(
+    record: ExecutionRecord,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+) {
     tokio::spawn(async move {
         emit_and_persist(record, audit_store).await;
     });
@@ -324,10 +331,7 @@ pub fn build_router(
         .with_state(state.clone());
 
     let main_router = axum::Router::new()
-        .route(
-            "/v1/execute/{route_id}",
-            axum::routing::any(handle_execute),
-        )
+        .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .merge(audit_routes)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
@@ -356,7 +360,11 @@ pub fn compute_state(
         let mut combined = String::new();
         if let Ok(entries) = std::fs::read_dir(policies_dir) {
             for entry in entries.flatten() {
-                if entry.path().extension().map_or(false, |e| e == "yaml" || e == "yml") {
+                if entry
+                    .path()
+                    .extension()
+                    .map_or(false, |e| e == "yaml" || e == "yml")
+                {
                     combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 }
             }

@@ -9,6 +9,7 @@ mod reload;
 mod routes;
 mod storage;
 
+use audit::hash::hash_string;
 use clap::Parser;
 use proxy::AppState;
 use reqwest::Client;
@@ -18,7 +19,6 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
-use audit::hash::hash_string;
 
 #[derive(Debug, Clone, clap::Subcommand)]
 enum Command {
@@ -149,7 +149,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut combined = String::new();
         if let Ok(entries) = std::fs::read_dir(&policies_dir_path) {
             for entry in entries.flatten() {
-                if entry.path().extension().map_or(false, |e| e == "yaml" || e == "yml") {
+                if entry
+                    .path()
+                    .extension()
+                    .map_or(false, |e| e == "yaml" || e == "yml")
+                {
                     combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 }
             }
@@ -176,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
- 
+
     tracing::info!("Guard Rail Engine starting on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;

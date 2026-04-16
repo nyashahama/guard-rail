@@ -24,8 +24,7 @@ fn write_file(dir: &std::path::Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
 }
 
-async fn start_stage2_test_app(
-) -> (
+async fn start_stage2_test_app() -> (
     String,
     guard_rail_engine::storage::postgres::PostgresAuditStore,
     tempfile::TempDir,
@@ -82,19 +81,27 @@ policies:
 "#,
     );
 
-    let route_table = guard_rail_engine::routes::RouteTable::load(&config_dir.join("routes.yaml")).unwrap();
+    let route_table =
+        guard_rail_engine::routes::RouteTable::load(&config_dir.join("routes.yaml")).unwrap();
     let policy_set = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
     let state = guard_rail_engine::proxy::AppState {
         routes: std::sync::Arc::new(tokio::sync::RwLock::new(route_table)),
         policies: std::sync::Arc::new(tokio::sync::RwLock::new(policy_set)),
         http_client: reqwest::Client::new(),
         audit_store: Some(store.clone()),
-        route_config_hash: guard_rail_engine::audit::hash::hash_string(&std::fs::read_to_string(config_dir.join("routes.yaml")).unwrap_or_default()),
-        policy_set_hash: guard_rail_engine::audit::hash::hash_string(&std::fs::read_to_string(policies_dir.join("policy.yaml")).unwrap_or_default()),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string(
+            &std::fs::read_to_string(config_dir.join("routes.yaml")).unwrap_or_default(),
+        ),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string(
+            &std::fs::read_to_string(policies_dir.join("policy.yaml")).unwrap_or_default(),
+        ),
     };
 
     let app = axum::Router::new()
-        .route("/v1/execute/{route_id}", axum::routing::any(guard_rail_engine::proxy::handle_execute))
+        .route(
+            "/v1/execute/{route_id}",
+            axum::routing::any(guard_rail_engine::proxy::handle_execute),
+        )
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -135,7 +142,11 @@ async fn test_invalid_json_on_known_route_persists_rejected_audit_row() {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let row = store.get_execution_by_id(&execution_id).await.unwrap().unwrap();
+    let row = store
+        .get_execution_by_id(&execution_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.verdict, "REJECTED");
     assert_eq!(row.rejection_reason.as_deref(), Some("invalid_json"));
 }
@@ -189,14 +200,18 @@ async fn test_insert_execution_and_fetch_it_back() {
             user_agent: Some("integration-test".to_string()),
             had_authorization_header: false,
             request_size_bytes: 32,
-            request_body_sha256: guard_rail_engine::audit::hash::hash_body(br#"{"callback":"https://evil.sh"}"#),
+            request_body_sha256: guard_rail_engine::audit::hash::hash_body(
+                br#"{"callback":"https://evil.sh"}"#,
+            ),
             verdict: ExecutionVerdict::Blocked,
             rejection_reason: None,
             matched_policy_name: Some("block-callbacks".to_string()),
             matched_rule_field: Some("$.callback".to_string()),
             matched_rule_condition: Some("domain_not_in".to_string()),
             matched_rule_severity: Some("critical".to_string()),
-            violation_value_hash: Some(guard_rail_engine::audit::hash::hash_string("https://evil.sh")),
+            violation_value_hash: Some(guard_rail_engine::audit::hash::hash_string(
+                "https://evil.sh",
+            )),
             violation_value_preview: Some("https://evil.sh".to_string()),
             upstream_status: None,
             forward_error: None,
@@ -217,7 +232,11 @@ async fn test_insert_execution_and_fetch_it_back() {
 
     store.insert_execution(&record).await.unwrap();
 
-    let row = store.get_execution_by_id("GR-EXE-blocked-1").await.unwrap().unwrap();
+    let row = store
+        .get_execution_by_id("GR-EXE-blocked-1")
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(row.route_id, "test-route");
     assert_eq!(row.verdict, "BLOCKED");
     assert!(row.previous_hash.is_none());

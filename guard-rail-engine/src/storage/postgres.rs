@@ -2,9 +2,7 @@ use sqlx::{PgPool, Row};
 
 pub use sqlx::postgres::PgPoolOptions;
 
-pub async fn connect_pool(
-    config: &crate::config::DatabaseConfig,
-) -> Result<PgPool, sqlx::Error> {
+pub async fn connect_pool(config: &crate::config::DatabaseConfig) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(config.max_connections)
         .connect(&config.url)
@@ -25,7 +23,9 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
         if count == 1 {
             Ok(())
         } else {
-            Err(sqlx::Error::Protocol("execution_audit table missing".into()))
+            Err(sqlx::Error::Protocol(
+                "execution_audit table missing".into(),
+            ))
         }
     })
 }
@@ -38,18 +38,20 @@ pub struct PostgresAuditStore {
 
 impl PostgresAuditStore {
     pub fn new(pool: PgPool, write_timeout: std::time::Duration) -> Self {
-        Self { pool, write_timeout }
+        Self {
+            pool,
+            write_timeout,
+        }
     }
 
     pub async fn insert_execution(
         &self,
         record: &crate::execution::ExecutionRecord,
     ) -> Result<(), sqlx::Error> {
-        let previous_hash: Option<String> = sqlx::query_scalar(
-            "select record_hash from execution_audit order by id desc limit 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let previous_hash: Option<String> =
+            sqlx::query_scalar("select record_hash from execution_audit order by id desc limit 1")
+                .fetch_optional(&self.pool)
+                .await?;
 
         let record_hash = crate::audit::hash::record_hash(record, previous_hash.as_deref());
 
@@ -161,7 +163,9 @@ impl PostgresAuditStore {
             upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
             forward_error: r.get("forward_error"),
             latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
-            latency_forward_ms: r.get::<Option<i64>, _>("latency_forward_ms").map(|v| v as u128),
+            latency_forward_ms: r
+                .get::<Option<i64>, _>("latency_forward_ms")
+                .map(|v| v as u128),
             latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
             route_config_hash: r.get("route_config_hash"),
             policy_set_hash: r.get("policy_set_hash"),
@@ -230,7 +234,9 @@ impl PostgresAuditStore {
                 upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
                 forward_error: r.get("forward_error"),
                 latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
-                latency_forward_ms: r.get::<Option<i64>, _>("latency_forward_ms").map(|v| v as u128),
+                latency_forward_ms: r
+                    .get::<Option<i64>, _>("latency_forward_ms")
+                    .map(|v| v as u128),
                 latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
                 route_config_hash: r.get("route_config_hash"),
                 policy_set_hash: r.get("policy_set_hash"),

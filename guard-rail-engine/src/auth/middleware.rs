@@ -1,9 +1,4 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::State, http::StatusCode, middleware::Next, response::Response};
 
 pub async fn require_admin_token(
     State(expected_token): State<String>,

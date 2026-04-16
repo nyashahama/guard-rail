@@ -250,10 +250,16 @@ async fn build_test_router_with_audit_store() -> axum::Router {
 
     let state = guard_rail_engine::proxy::AppState {
         routes: std::sync::Arc::new(tokio::sync::RwLock::new(
-            guard_rail_engine::routes::RouteTable::load(std::path::Path::new("./config/routes.yaml")).unwrap(),
+            guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
+                "./config/routes.yaml",
+            ))
+            .unwrap(),
         )),
         policies: std::sync::Arc::new(tokio::sync::RwLock::new(
-            guard_rail_engine::policy::PolicySet::load_dir(std::path::Path::new("./config/policies")).unwrap(),
+            guard_rail_engine::policy::PolicySet::load_dir(std::path::Path::new(
+                "./config/policies",
+            ))
+            .unwrap(),
         )),
         http_client: reqwest::Client::new(),
         audit_store: Some(audit_store),
@@ -261,11 +267,7 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
     };
 
-    guard_rail_engine::proxy::build_router(
-        state,
-        "stage2-admin-token".to_string(),
-        1_048_576,
-    )
+    guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
 }
 
 async fn build_test_router_with_seeded_audit_rows() -> axum::Router {
@@ -343,7 +345,9 @@ async fn test_audit_list_returns_newest_first() {
     let response = app.oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["items"][0]["execution_id"], "GR-EXE-3");
     assert_eq!(json["items"][1]["execution_id"], "GR-EXE-2");
