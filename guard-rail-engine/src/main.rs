@@ -142,16 +142,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_store: Some(audit_store),
     };
 
-    let app = axum::Router::new()
-        .route(
-            "/v1/execute/{route_id}",
-            axum::routing::any(proxy::handle_execute),
-        )
-        .route("/health", axum::routing::get(|| async { "ok" }))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            app_config.server.request_body_limit_bytes,
-        ))
-        .with_state(state);
+    let app = proxy::build_router(
+        state,
+        app_config.admin.token.clone(),
+        app_config.server.request_body_limit_bytes,
+    );
 
     let addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
