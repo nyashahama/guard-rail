@@ -67,6 +67,7 @@ pub fn record_hash(record: &ExecutionRecord, previous_hash: Option<&str>) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::ExecutionVerdict;
 
     #[test]
     fn test_hash_body_uses_raw_bytes() {
