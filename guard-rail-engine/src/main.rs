@@ -60,7 +60,8 @@ mod tests {
     #[test]
     fn test_serve_is_default_command() {
         let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Serve)));
+        let command = cli.command.unwrap_or_default();
+        assert!(matches!(command, Command::Serve));
     }
 }
 
