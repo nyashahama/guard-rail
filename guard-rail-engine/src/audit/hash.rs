@@ -17,7 +17,8 @@ pub fn preview_violation_value(value: &str) -> Option<String> {
     }
 
     if let Some((local, domain)) = value.split_once('@')
-        && !local.is_empty() && !domain.is_empty()
+        && !local.is_empty()
+        && !domain.is_empty()
     {
         return Some(format!("{}***@{}", &local[..1], domain));
     }
