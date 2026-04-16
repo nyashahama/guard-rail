@@ -20,16 +20,11 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
-#[derive(Debug, Clone, clap::Subcommand)]
+#[derive(Debug, Clone, clap::Subcommand, Default)]
 enum Command {
+    #[default]
     Serve,
     Migrate,
-}
-
-impl Default for Command {
-    fn default() -> Self {
-        Command::Serve
-    }
 }
 
 #[derive(Parser)]
@@ -152,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if entry
                     .path()
                     .extension()
-                    .map_or(false, |e| e == "yaml" || e == "yml")
+                    .is_some_and(|e| e == "yaml" || e == "yml")
                 {
                     combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 }

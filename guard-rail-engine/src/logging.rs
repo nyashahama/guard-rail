@@ -58,6 +58,7 @@ impl From<&ExecutionRecord> for ExecutionLog {
 }
 
 impl ExecutionLog {
+    #[allow(dead_code)]
     pub fn new(execution_id: String, route_id: String, method: String, source_ip: String) -> Self {
         ExecutionLog {
             execution_id,

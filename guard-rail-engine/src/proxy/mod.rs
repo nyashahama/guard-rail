@@ -341,6 +341,7 @@ pub fn build_router(
     main_router.with_state(state)
 }
 
+#[allow(dead_code)]
 pub fn compute_state(
     routes_path: &std::path::Path,
     policies_dir: &std::path::Path,
@@ -363,7 +364,7 @@ pub fn compute_state(
                 if entry
                     .path()
                     .extension()
-                    .map_or(false, |e| e == "yaml" || e == "yml")
+                    .is_some_and(|e| e == "yaml" || e == "yml")
                 {
                     combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
                 }

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::storage::postgres::ExecutionAuditRow;
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AuditListQuery {
     pub route_id: Option<String>,
     pub verdict: Option<String>,

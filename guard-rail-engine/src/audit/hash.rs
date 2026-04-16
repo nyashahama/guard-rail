@@ -1,5 +1,4 @@
 use crate::execution::ExecutionRecord;
-use crate::execution::ExecutionVerdict;
 
 pub fn hash_body(raw: &[u8]) -> String {
     use sha2::{Digest, Sha256};
@@ -11,16 +10,16 @@ pub fn hash_string(value: &str) -> String {
 }
 
 pub fn preview_violation_value(value: &str) -> Option<String> {
-    if let Ok(url) = url::Url::parse(value) {
-        if let Some(host) = url.host_str() {
-            return Some(format!("{}://{}", url.scheme(), host));
-        }
+    if let Ok(url) = url::Url::parse(value)
+        && let Some(host) = url.host_str()
+    {
+        return Some(format!("{}://{}", url.scheme(), host));
     }
 
-    if let Some((local, domain)) = value.split_once('@') {
-        if !local.is_empty() && !domain.is_empty() {
-            return Some(format!("{}***@{}", &local[..1], domain));
-        }
+    if let Some((local, domain)) = value.split_once('@')
+        && !local.is_empty() && !domain.is_empty()
+    {
+        return Some(format!("{}***@{}", &local[..1], domain));
     }
 
     if value.len() >= 8 {

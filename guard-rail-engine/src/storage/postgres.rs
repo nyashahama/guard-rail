@@ -272,7 +272,7 @@ impl PostgresAuditStore {
         let mut chain_valid = true;
         let mut first_invalid_record: Option<String> = None;
 
-        if let (Some(from), Some(to)) = (from_row, to_row) {
+        if let (Some(from), Some(_to)) = (from_row, to_row) {
             let mut current = Some(from.record_hash.clone());
 
             let rows = sqlx::query(
