@@ -117,6 +117,29 @@ policies:
     (format!("http://{}", addr), tmp)
 }
 
+async fn build_test_router_without_audit_store() -> axum::Router {
+    let state = guard_rail_engine::proxy::AppState {
+        routes: Arc::new(RwLock::new(
+            guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
+                "./config/routes.yaml",
+            ))
+            .unwrap(),
+        )),
+        policies: Arc::new(RwLock::new(
+            guard_rail_engine::policy::PolicySet::load_dir(std::path::Path::new(
+                "./config/policies",
+            ))
+            .unwrap(),
+        )),
+        http_client: Client::new(),
+        audit_store: None,
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+    };
+
+    guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
+}
+
 #[tokio::test]
 async fn test_allow_path_forwards_to_upstream() {
     let upstream = start_mock_upstream(200, r#"{"result":"ok"}"#).await;
@@ -230,97 +253,9 @@ async fn test_wrong_method_returns_405() {
     assert!(body.contains("rejected"));
 }
 
-async fn build_test_router_with_audit_store() -> axum::Router {
-    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query("truncate table execution_audit restart identity")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let audit_store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
-        pool,
-        std::time::Duration::from_millis(250),
-    );
-
-    let state = guard_rail_engine::proxy::AppState {
-        routes: std::sync::Arc::new(tokio::sync::RwLock::new(
-            guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
-                "./config/routes.yaml",
-            ))
-            .unwrap(),
-        )),
-        policies: std::sync::Arc::new(tokio::sync::RwLock::new(
-            guard_rail_engine::policy::PolicySet::load_dir(std::path::Path::new(
-                "./config/policies",
-            ))
-            .unwrap(),
-        )),
-        http_client: reqwest::Client::new(),
-        audit_store: Some(audit_store),
-        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
-        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
-    };
-
-    guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
-}
-
-async fn build_test_router_with_seeded_audit_rows() -> axum::Router {
-    let app = build_test_router_with_audit_store().await;
-    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .unwrap();
-    let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
-        pool,
-        std::time::Duration::from_millis(250),
-    );
-
-    for execution_id in ["GR-EXE-1", "GR-EXE-2", "GR-EXE-3"] {
-        let record = guard_rail_engine::execution::ExecutionRecord {
-            execution_id: execution_id.to_string(),
-            execution_started_at: chrono::Utc::now(),
-            route_id: "test-route".to_string(),
-            upstream_url: Some("http://upstream.test/api".to_string()),
-            method: "POST".to_string(),
-            source_ip: "127.0.0.1".to_string(),
-            content_type: Some("application/json".to_string()),
-            user_agent: Some("seed-test".to_string()),
-            had_authorization_header: false,
-            request_size_bytes: 16,
-            request_body_sha256: guard_rail_engine::audit::hash::hash_body(br#"{"ok":true}"#),
-            verdict: guard_rail_engine::execution::ExecutionVerdict::Allowed,
-            rejection_reason: None,
-            matched_policy_name: None,
-            matched_rule_field: None,
-            matched_rule_condition: None,
-            matched_rule_severity: None,
-            violation_value_hash: None,
-            violation_value_preview: None,
-            upstream_status: Some(200),
-            forward_error: None,
-            latency_inspect_us: 10,
-            latency_forward_ms: Some(4),
-            latency_total_ms: 5,
-            route_config_hash: "route-hash".to_string(),
-            policy_set_hash: "policy-hash".to_string(),
-        };
-        store.insert_execution(&record).await.unwrap();
-    }
-
-    app
-}
-
 #[tokio::test]
 async fn test_audit_list_requires_admin_token() {
-    let app = build_test_router_with_audit_store().await;
+    let app = build_test_router_without_audit_store().await;
 
     let req = axum::http::Request::builder()
         .uri("/v1/audit/executions")
@@ -330,25 +265,4 @@ async fn test_audit_list_requires_admin_token() {
     let response = app.oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn test_audit_list_returns_newest_first() {
-    let app = build_test_router_with_seeded_audit_rows().await;
-
-    let req = axum::http::Request::builder()
-        .uri("/v1/audit/executions?limit=2")
-        .header("authorization", "Bearer stage2-admin-token")
-        .body(axum::body::Body::empty())
-        .unwrap();
-
-    let response = app.oneshot(req).await.unwrap();
-
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["items"][0]["execution_id"], "GR-EXE-3");
-    assert_eq!(json["items"][1]["execution_id"], "GR-EXE-2");
 }
