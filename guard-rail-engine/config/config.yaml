@@ -13,3 +13,13 @@ forwarding:
 logging:
   level: "info"
   format: "json"
+
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+  max_connections: 10
+
+audit:
+  write_timeout_ms: 250
+
+admin:
+  token: "change-me"

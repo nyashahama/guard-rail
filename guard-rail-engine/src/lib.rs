@@ -1,6 +1,10 @@
+pub mod audit;
+pub mod auth;
 pub mod config;
+pub mod execution;
 pub mod logging;
 pub mod policy;
 pub mod proxy;
 pub mod reload;
 pub mod routes;
+pub mod storage;

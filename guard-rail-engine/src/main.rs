@@ -1,10 +1,15 @@
+mod audit;
+mod auth;
 mod config;
+mod execution;
 mod logging;
 mod policy;
 mod proxy;
 mod reload;
 mod routes;
+mod storage;
 
+use audit::hash::hash_string;
 use clap::Parser;
 use proxy::AppState;
 use reqwest::Client;
@@ -15,22 +20,70 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
 
+#[derive(Debug, Clone, clap::Subcommand, Default)]
+enum Command {
+    #[default]
+    Serve,
+    Migrate,
+}
+
 #[derive(Parser)]
 #[command(name = "guard-rail-engine", about = "Zero-trust execution runtime")]
 struct Cli {
-    /// Path to config.yaml
-    #[arg(short, long, default_value = "./config/config.yaml")]
+    #[command(subcommand)]
+    command: Option<Command>,
+
+    #[arg(short, long, default_value = "./config/config.yaml", global = true)]
     config: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_migrate_command_parses() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "migrate",
+            "--config",
+            "./config/config.yaml",
+        ])
+        .unwrap();
+
+        assert!(matches!(cli.command, Some(Command::Migrate)));
+        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    fn test_serve_is_default_command() {
+        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
+        let command = cli.command.unwrap_or_default();
+        assert!(matches!(command, Command::Serve));
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-
-    // Load config
     let app_config = config::AppConfig::load(&cli.config)?;
 
-    // Setup tracing
+    let command = cli.command.unwrap_or_default();
+
+    match command {
+        Command::Migrate => {
+            let pool = storage::postgres::connect_pool(&app_config.database).await?;
+            storage::postgres::run_migrations(&pool).await?;
+            println!("Migrations applied successfully");
+            return Ok(());
+        }
+        Command::Serve => {}
+    }
+
+    let pool = storage::postgres::connect_pool(&app_config.database).await?;
+    storage::postgres::assert_schema_ready(&pool).await?;
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&app_config.logging.level));
 
@@ -52,7 +105,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Loading policies from {}", app_config.policies_dir);
     let policy_set = policy::PolicySet::load_dir(&PathBuf::from(&app_config.policies_dir))?;
 
-    // Validate that all route policy references exist
     let required_policies = route_table.policy_names();
     policy_set
         .validate_references(&required_policies)
@@ -61,7 +113,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Arc::new(RwLock::new(route_table));
     let policies = Arc::new(RwLock::new(policy_set));
 
-    // Start hot-reload watcher
     let reload_routes = Arc::clone(&routes);
     let reload_policies = Arc::clone(&policies);
     reload::start_watcher(
@@ -75,22 +126,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .user_agent(&app_config.forwarding.user_agent)
         .build()?;
 
+    let audit_store = storage::postgres::PostgresAuditStore::new(
+        pool.clone(),
+        std::time::Duration::from_millis(250),
+    );
+
+    let route_config_path = PathBuf::from(&app_config.routes_file);
+    let policies_dir_path = PathBuf::from(&app_config.policies_dir);
+
+    let route_config_hash = if route_config_path.exists() {
+        hash_string(&std::fs::read_to_string(&route_config_path).unwrap_or_default())
+    } else {
+        hash_string("")
+    };
+
+    let policy_set_hash = if policies_dir_path.exists() {
+        let mut combined = String::new();
+        if let Ok(entries) = std::fs::read_dir(&policies_dir_path) {
+            for entry in entries.flatten() {
+                if entry
+                    .path()
+                    .extension()
+                    .is_some_and(|e| e == "yaml" || e == "yml")
+                {
+                    combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
+            }
+        }
+        hash_string(&combined)
+    } else {
+        hash_string("")
+    };
+
     let state = AppState {
         routes,
         policies,
         http_client,
+        audit_store: Some(audit_store),
+        route_config_hash,
+        policy_set_hash,
     };
 
-    let app = axum::Router::new()
-        .route(
-            "/v1/execute/{route_id}",
-            axum::routing::any(proxy::handle_execute),
-        )
-        .route("/health", axum::routing::get(|| async { "ok" }))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            app_config.server.request_body_limit_bytes,
-        ))
-        .with_state(state);
+    let app = proxy::build_router(
+        state,
+        app_config.admin.token.clone(),
+        app_config.server.request_body_limit_bytes,
+    );
 
     let addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
