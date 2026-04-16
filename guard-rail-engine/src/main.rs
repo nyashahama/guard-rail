@@ -1,4 +1,5 @@
 mod audit;
+mod auth;
 mod config;
 mod execution;
 mod logging;
@@ -86,7 +87,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = storage::postgres::connect_pool(&app_config.database).await?;
     storage::postgres::assert_schema_ready(&pool).await?;
-    drop(pool);
 
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(&app_config.logging.level));
@@ -130,10 +130,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .user_agent(&app_config.forwarding.user_agent)
         .build()?;
 
+    let audit_store = storage::postgres::PostgresAuditStore::new(
+        pool.clone(),
+        std::time::Duration::from_millis(250),
+    );
+
     let state = AppState {
         routes,
         policies,
         http_client,
+        audit_store: Some(audit_store),
     };
 
     let app = axum::Router::new()

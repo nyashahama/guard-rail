@@ -175,9 +175,139 @@ impl PostgresAuditStore {
             .fetch_one(&self.pool)
             .await
     }
+
+    pub async fn list_executions(
+        &self,
+        query: crate::audit::api::AuditListQuery,
+    ) -> Result<crate::audit::api::AuditListResponse, sqlx::Error> {
+        let limit = query.limit.unwrap_or(50).min(1000);
+        let offset = query.cursor.unwrap_or(0);
+        let order = query.order.as_deref().unwrap_or("desc");
+
+        let order_sql = if order == "asc" { "ASC" } else { "DESC" };
+
+        let rows = sqlx::query(&format!(
+            r#"
+            select
+                execution_id, execution_started_at, route_id, upstream_url, method,
+                source_ip, content_type, user_agent, had_authorization_header,
+                request_size_bytes, request_body_sha256, verdict, rejection_reason,
+                matched_policy_name, matched_rule_field, matched_rule_condition,
+                matched_rule_severity, violation_value_hash, violation_value_preview,
+                upstream_status, forward_error, latency_inspect_us, latency_forward_ms,
+                latency_total_ms, route_config_hash, policy_set_hash, previous_hash, record_hash
+            from execution_audit
+            order by execution_started_at {}
+            limit {} offset {}
+            "#,
+            order_sql, limit, offset
+        ))
+        .fetch_all(&self.pool)
+        .await?;
+
+        let items: Vec<ExecutionAuditRow> = rows
+            .iter()
+            .map(|r| ExecutionAuditRow {
+                execution_id: r.get("execution_id"),
+                execution_started_at: r.get("execution_started_at"),
+                route_id: r.get("route_id"),
+                upstream_url: r.get("upstream_url"),
+                method: r.get("method"),
+                source_ip: r.get("source_ip"),
+                content_type: r.get("content_type"),
+                user_agent: r.get("user_agent"),
+                had_authorization_header: r.get("had_authorization_header"),
+                request_size_bytes: r.get::<i64, _>("request_size_bytes") as usize,
+                request_body_sha256: r.get("request_body_sha256"),
+                verdict: r.get("verdict"),
+                rejection_reason: r.get("rejection_reason"),
+                matched_policy_name: r.get("matched_policy_name"),
+                matched_rule_field: r.get("matched_rule_field"),
+                matched_rule_condition: r.get("matched_rule_condition"),
+                matched_rule_severity: r.get("matched_rule_severity"),
+                violation_value_hash: r.get("violation_value_hash"),
+                violation_value_preview: r.get("violation_value_preview"),
+                upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
+                forward_error: r.get("forward_error"),
+                latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
+                latency_forward_ms: r.get::<Option<i64>, _>("latency_forward_ms").map(|v| v as u128),
+                latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
+                route_config_hash: r.get("route_config_hash"),
+                policy_set_hash: r.get("policy_set_hash"),
+                previous_hash: r.get("previous_hash"),
+                record_hash: r.get("record_hash"),
+            })
+            .collect();
+
+        let total = self.count_executions().await?;
+        let next_cursor = if items.len() as i64 == limit {
+            Some(offset + limit)
+        } else {
+            None
+        };
+
+        Ok(crate::audit::api::AuditListResponse {
+            items,
+            total,
+            next_cursor,
+        })
+    }
+
+    pub async fn verify_integrity(
+        &self,
+        query: crate::audit::api::IntegrityQuery,
+    ) -> Result<crate::audit::api::IntegrityResponse, sqlx::Error> {
+        let from_id = query.from_execution_id.clone();
+        let to_id = query.to_execution_id.clone();
+
+        let from_row = self.get_execution_by_id(&from_id).await?;
+        let to_row = self.get_execution_by_id(&to_id).await?;
+
+        let mut chain_valid = true;
+        let mut first_invalid_record: Option<String> = None;
+
+        if let (Some(from), Some(to)) = (from_row, to_row) {
+            let mut current = Some(from.record_hash.clone());
+
+            let rows = sqlx::query(
+                r#"
+                select record_hash, previous_hash from execution_audit
+                where execution_id >= $1 and execution_id <= $2
+                order by execution_started_at asc
+                "#,
+            )
+            .bind(&from_id)
+            .bind(&to_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+            for row in rows {
+                let record_hash: String = row.get("record_hash");
+                let previous_hash: Option<String> = row.get("previous_hash");
+
+                if previous_hash.as_ref() != current.as_ref() {
+                    chain_valid = false;
+                    first_invalid_record = Some(record_hash);
+                    break;
+                }
+                current = Some(record_hash);
+            }
+
+            if to.record_hash == to_id {
+                chain_valid = false;
+            }
+        }
+
+        Ok(crate::audit::api::IntegrityResponse {
+            chain_valid,
+            first_invalid_record,
+            checked_from: from_id,
+            checked_to: to_id,
+        })
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ExecutionAuditRow {
     pub execution_id: String,
     pub execution_started_at: chrono::DateTime<chrono::Utc>,

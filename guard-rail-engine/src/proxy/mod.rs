@@ -21,6 +21,18 @@ pub struct AppState {
     pub routes: Arc<RwLock<RouteTable>>,
     pub policies: Arc<RwLock<PolicySet>>,
     pub http_client: Client,
+    pub audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("routes", &"<RwLock<RouteTable>>")
+            .field("policies", &"<RwLock<PolicySet>>")
+            .field("http_client", &"<Client>")
+            .field("audit_store", &self.audit_store.is_some())
+            .finish()
+    }
 }
 
 pub async fn handle_execute(
@@ -129,4 +141,42 @@ pub async fn handle_execute(
             response::bad_gateway_response(&execution_id, &e)
         }
     }
+}
+
+pub fn build_router(
+    state: AppState,
+    admin_token: String,
+    request_body_limit_bytes: usize,
+) -> axum::Router {
+    let audit_routes = axum::Router::new()
+        .route(
+            "/v1/audit/executions",
+            axum::routing::get(crate::audit::api::list_executions),
+        )
+        .route(
+            "/v1/audit/executions/{execution_id}",
+            axum::routing::get(crate::audit::api::get_execution),
+        )
+        .route(
+            "/v1/audit/integrity",
+            axum::routing::get(crate::audit::api::verify_integrity),
+        )
+        .route_layer(axum::middleware::from_fn_with_state(
+            admin_token,
+            crate::auth::middleware::require_admin_token,
+        ))
+        .with_state(state.clone());
+
+    let main_router = axum::Router::new()
+        .route(
+            "/v1/execute/{route_id}",
+            axum::routing::any(handle_execute),
+        )
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        .merge(audit_routes)
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            request_body_limit_bytes,
+        ));
+
+    main_router.with_state(state)
 }
