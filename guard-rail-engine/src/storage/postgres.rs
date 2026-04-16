@@ -292,10 +292,6 @@ impl PostgresAuditStore {
                 }
                 current = Some(record_hash);
             }
-
-            if to.record_hash == to_id {
-                chain_valid = false;
-            }
         }
 
         Ok(crate::audit::api::IntegrityResponse {
