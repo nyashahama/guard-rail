@@ -91,6 +91,8 @@ policies:
         policies: Arc::new(RwLock::new(policy_set)),
         http_client: Client::new(),
         audit_store: None,
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("test"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("test"),
     };
 
     let app = Router::new()
@@ -255,6 +257,8 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         )),
         http_client: reqwest::Client::new(),
         audit_store: Some(audit_store),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
     };
 
     guard_rail_engine::proxy::build_router(

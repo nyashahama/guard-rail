@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
+use audit::hash::hash_string;
 
 #[derive(Debug, Clone, clap::Subcommand)]
 enum Command {
@@ -135,11 +136,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::time::Duration::from_millis(250),
     );
 
+    let route_config_path = PathBuf::from(&app_config.routes_file);
+    let policies_dir_path = PathBuf::from(&app_config.policies_dir);
+
+    let route_config_hash = if route_config_path.exists() {
+        hash_string(&std::fs::read_to_string(&route_config_path).unwrap_or_default())
+    } else {
+        hash_string("")
+    };
+
+    let policy_set_hash = if policies_dir_path.exists() {
+        let mut combined = String::new();
+        if let Ok(entries) = std::fs::read_dir(&policies_dir_path) {
+            for entry in entries.flatten() {
+                if entry.path().extension().map_or(false, |e| e == "yaml" || e == "yml") {
+                    combined.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
+                }
+            }
+        }
+        hash_string(&combined)
+    } else {
+        hash_string("")
+    };
+
     let state = AppState {
         routes,
         policies,
         http_client,
         audit_store: Some(audit_store),
+        route_config_hash,
+        policy_set_hash,
     };
 
     let app = proxy::build_router(
