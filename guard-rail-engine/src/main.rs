@@ -1,4 +1,6 @@
+mod audit;
 mod config;
+mod execution;
 mod logging;
 mod policy;
 mod proxy;

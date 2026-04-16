@@ -1,3 +1,5 @@
+use crate::execution::ExecutionRecord;
+use crate::execution::ExecutionVerdict;
 use chrono::Utc;
 use serde::Serialize;
 
@@ -25,6 +27,34 @@ pub struct ExecutionLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latency_forward_ms: Option<u128>,
     pub latency_total_ms: u128,
+}
+
+impl From<&ExecutionRecord> for ExecutionLog {
+    fn from(record: &ExecutionRecord) -> Self {
+        ExecutionLog {
+            execution_id: record.execution_id.clone(),
+            timestamp: record
+                .execution_started_at
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            route_id: record.route_id.clone(),
+            method: record.method.clone(),
+            source_ip: record.source_ip.clone(),
+            verdict: match record.verdict {
+                ExecutionVerdict::Rejected => "REJECTED".to_string(),
+                ExecutionVerdict::Blocked => "BLOCKED".to_string(),
+                ExecutionVerdict::Allowed => "ALLOWED".to_string(),
+            },
+            policy: record.matched_policy_name.clone(),
+            rule_field: record.matched_rule_field.clone(),
+            violation_value: record.violation_value_preview.clone(),
+            upstream: record.upstream_url.clone(),
+            upstream_status: record.upstream_status,
+            forward_error: record.forward_error.clone(),
+            latency_inspect_us: record.latency_inspect_us,
+            latency_forward_ms: record.latency_forward_ms,
+            latency_total_ms: record.latency_total_ms,
+        }
+    }
 }
 
 impl ExecutionLog {
@@ -99,5 +129,45 @@ mod tests {
         assert!(json.contains("\"verdict\":\"ALLOWED\""));
         assert!(json.contains("\"upstream_status\":200"));
         assert!(json.contains("\"latency_forward_ms\":45"));
+    }
+
+    #[test]
+    fn test_execution_log_from_record() {
+        use crate::audit::hash::{hash_body, hash_string};
+
+        let record = ExecutionRecord {
+            execution_id: "GR-EXE-123".to_string(),
+            execution_started_at: chrono::Utc::now(),
+            route_id: "transfer-api".to_string(),
+            upstream_url: Some("https://internal.api".to_string()),
+            method: "POST".to_string(),
+            source_ip: "127.0.0.1".to_string(),
+            content_type: Some("application/json".to_string()),
+            user_agent: None,
+            had_authorization_header: true,
+            request_size_bytes: 100,
+            request_body_sha256: hash_body(b"test body"),
+            verdict: ExecutionVerdict::Blocked,
+            rejection_reason: Some("policy violation".to_string()),
+            matched_policy_name: Some("block-transfer".to_string()),
+            matched_rule_field: Some("$.amount".to_string()),
+            matched_rule_condition: Some("gt".to_string()),
+            matched_rule_severity: Some("high".to_string()),
+            violation_value_hash: Some(hash_string("https://evil.com")),
+            violation_value_preview: Some("https://evil.com".to_string()),
+            upstream_status: None,
+            forward_error: None,
+            latency_inspect_us: 50,
+            latency_forward_ms: None,
+            latency_total_ms: 2,
+            route_config_hash: "route-hash".to_string(),
+            policy_set_hash: "policy-hash".to_string(),
+        };
+
+        let log = ExecutionLog::from(&record);
+        assert_eq!(log.execution_id, "GR-EXE-123");
+        assert_eq!(log.verdict, "BLOCKED");
+        assert_eq!(log.policy, Some("block-transfer".to_string()));
+        assert_eq!(log.violation_value, Some("https://evil.com".to_string()));
     }
 }
