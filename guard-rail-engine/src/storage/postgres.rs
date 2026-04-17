@@ -44,6 +44,13 @@ impl PostgresAuditStore {
         }
     }
 
+    pub async fn readiness_check(&self) -> Result<(), sqlx::Error> {
+        sqlx::query_scalar::<_, i32>("select 1")
+            .fetch_one(&self.pool)
+            .await
+            .map(|_| ())
+    }
+
     pub async fn insert_execution(
         &self,
         record: &crate::execution::ExecutionRecord,

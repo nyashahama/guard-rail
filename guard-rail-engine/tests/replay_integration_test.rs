@@ -130,6 +130,10 @@ async fn start_stage4_test_app() -> TestHarness {
         policies,
         http_client: reqwest::Client::new(),
         audit_store: Some(store.clone()),
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: "test".into(),
         policy_set_hash: "test".into(),
         admin_token: "test-admin".into(),
@@ -149,7 +153,12 @@ async fn start_stage4_test_app() -> TestHarness {
         },
     };
 
-    let app = guard_rail_engine::proxy::build_router(state.clone(), "test-admin".into(), 1_048_576);
+    let app = guard_rail_engine::proxy::build_router(
+        state.clone(),
+        "test-admin".into(),
+        1_048_576,
+        &guard_rail_engine::config::ObservabilityConfig::default(),
+    );
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -160,8 +169,8 @@ async fn start_stage4_test_app() -> TestHarness {
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;

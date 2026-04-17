@@ -128,6 +128,10 @@ policies:
         policies: std::sync::Arc::new(tokio::sync::RwLock::new(policy_set)),
         http_client: reqwest::Client::new(),
         audit_store: Some(store.clone()),
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: guard_rail_engine::audit::hash::hash_string(
             &std::fs::read_to_string(config_dir.join("routes.yaml")).unwrap_or_default(),
         ),
@@ -212,6 +216,10 @@ async fn build_test_router_with_audit_store() -> AuditRouterHarness {
         )),
         http_client: reqwest::Client::new(),
         audit_store: Some(audit_store),
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
         admin_token: "stage2-admin-token".to_string(),
@@ -228,6 +236,7 @@ async fn build_test_router_with_audit_store() -> AuditRouterHarness {
             state,
             "stage2-admin-token".to_string(),
             1_048_576,
+            &guard_rail_engine::config::ObservabilityConfig::default(),
         ),
         _db_guard: db_guard,
     }
@@ -535,6 +544,10 @@ routes:
         policies: std::sync::Arc::new(tokio::sync::RwLock::new(policies)),
         http_client: reqwest::Client::new(),
         audit_store: Some(store),
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
         admin_token: "stage2-admin-token".to_string(),
@@ -544,8 +557,12 @@ routes:
         replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
-    let app =
-        guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576);
+    let app = guard_rail_engine::proxy::build_router(
+        state,
+        "stage2-admin-token".to_string(),
+        1_048_576,
+        &guard_rail_engine::config::ObservabilityConfig::default(),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

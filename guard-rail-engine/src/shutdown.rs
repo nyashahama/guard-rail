@@ -49,12 +49,47 @@ impl LifecycleState {
         *self.phase.write().await = RuntimePhase::Draining;
     }
 
+    pub async fn mark_stopped(&self) {
+        *self.phase.write().await = RuntimePhase::Stopped;
+    }
+
     pub async fn current(&self) -> RuntimePhase {
         *self.phase.read().await
     }
 
     pub async fn is_ready(&self) -> bool {
         matches!(self.current().await, RuntimePhase::Ready)
+    }
+}
+
+pub async fn shutdown_signal(
+    lifecycle: LifecycleState,
+    metrics: Option<Arc<crate::observability::metrics::Metrics>>,
+) {
+    wait_for_signal().await;
+
+    lifecycle.begin_drain().await;
+    if let Some(metrics) = &metrics {
+        metrics.set_readiness(false);
+        metrics.record_shutdown_transition("draining");
+    }
+}
+
+async fn wait_for_signal() {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = terminate.recv() => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
     }
 }
 
