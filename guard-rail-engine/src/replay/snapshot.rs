@@ -64,10 +64,10 @@ pub fn build_snapshot_from_set(
 pub fn filter_headers(headers: &HeaderMap, capture_list: &[String]) -> serde_json::Value {
     let mut result = serde_json::Map::new();
     for key in capture_list {
-        if let Some(value) = headers.get(key.as_str()) {
-            if let Ok(v) = value.to_str() {
-                result.insert(key.clone(), serde_json::Value::String(v.to_string()));
-            }
+        if let Some(value) = headers.get(key.as_str())
+            && let Ok(v) = value.to_str()
+        {
+            result.insert(key.clone(), serde_json::Value::String(v.to_string()));
         }
     }
     if result.is_empty() {

@@ -386,7 +386,7 @@ pub async fn handle_execute(
                 let capture_request_headers =
                     snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
                 let policies = state.policies.read().await;
-                let snapshot = snapshot::build_snapshot_from_set(&route, &*policies)
+                let snapshot = snapshot::build_snapshot_from_set(&route, &policies)
                     .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
                 drop(policies);
                 let artifacts = ReplayArtifacts {
@@ -420,7 +420,7 @@ pub async fn handle_execute(
         let capture_request_headers =
             snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
         let policies = state.policies.read().await;
-        let sp = snapshot::build_snapshot_from_set(&route, &*policies)
+        let sp = snapshot::build_snapshot_from_set(&route, &policies)
             .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
         drop(policies);
         (Some(sp), Some(capture_request_headers))

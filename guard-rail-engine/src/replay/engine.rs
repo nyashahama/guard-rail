@@ -17,6 +17,20 @@ pub enum ReplayPolicySource {
     Current,
 }
 
+pub struct ReplayRunParams {
+    pub id: String,
+    pub execution_id: String,
+    pub policy_source: String,
+    pub evaluated_snapshot_hash: String,
+    pub original_verdict: String,
+    pub replay_verdict: String,
+    pub original_policy_name: Option<String>,
+    pub replay_policy_name: Option<String>,
+    pub original_rule_field: Option<String>,
+    pub replay_rule_field: Option<String>,
+    pub verdict_changed: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ReplayResult {
     pub execution_id: String,
@@ -34,11 +48,13 @@ pub struct ReplayResult {
 #[derive(Debug)]
 pub enum ReplayError {
     Unavailable,
+    #[allow(dead_code)]
     NotFound,
     ArtifactsMissing,
     ExecutionNotFound,
+    #[allow(dead_code)]
     PolicyNotFound(String),
-    Storage(sqlx::Error),
+    Storage(#[allow(dead_code)] sqlx::Error),
 }
 
 impl From<sqlx::Error> for ReplayError {
@@ -177,20 +193,22 @@ async fn persist_replay_run(
         ReplayPolicySource::Current => "current",
     };
 
+    let params = ReplayRunParams {
+        id: uuid::Uuid::new_v4().to_string(),
+        execution_id: result.execution_id.clone(),
+        policy_source: policy_source_str.to_string(),
+        evaluated_snapshot_hash: result.evaluated_snapshot_hash.clone(),
+        original_verdict: result.original_verdict.clone(),
+        replay_verdict: result.replay_verdict.clone(),
+        original_policy_name: result.original_policy_name.clone(),
+        replay_policy_name: result.replay_policy_name.clone(),
+        original_rule_field: result.original_rule_field.clone(),
+        replay_rule_field: result.replay_rule_field.clone(),
+        verdict_changed: result.verdict_changed,
+    };
+
     store
-        .insert_replay_run(
-            &uuid::Uuid::new_v4().to_string(),
-            &result.execution_id,
-            policy_source_str,
-            &result.evaluated_snapshot_hash,
-            &result.original_verdict,
-            &result.replay_verdict,
-            result.original_policy_name.as_deref(),
-            result.replay_policy_name.as_deref(),
-            result.original_rule_field.as_deref(),
-            result.replay_rule_field.as_deref(),
-            result.verdict_changed,
-        )
+        .insert_replay_run(&params)
         .await
         .map_err(ReplayError::Storage)
 }

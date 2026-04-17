@@ -504,17 +504,7 @@ impl PostgresAuditStore {
 
     pub async fn insert_replay_run(
         &self,
-        id: &str,
-        execution_id: &str,
-        policy_source: &str,
-        evaluated_snapshot_hash: &str,
-        original_verdict: &str,
-        replay_verdict: &str,
-        original_policy_name: Option<&str>,
-        replay_policy_name: Option<&str>,
-        original_rule_field: Option<&str>,
-        replay_rule_field: Option<&str>,
-        verdict_changed: bool,
+        params: &crate::replay::engine::ReplayRunParams,
     ) -> Result<(), sqlx::Error> {
         tokio::time::timeout(
             self.write_timeout,
@@ -528,17 +518,17 @@ impl PostgresAuditStore {
                 ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 "#,
             )
-            .bind(id)
-            .bind(execution_id)
-            .bind(policy_source)
-            .bind(evaluated_snapshot_hash)
-            .bind(original_verdict)
-            .bind(replay_verdict)
-            .bind(original_policy_name)
-            .bind(replay_policy_name)
-            .bind(original_rule_field)
-            .bind(replay_rule_field)
-            .bind(verdict_changed)
+            .bind(&params.id)
+            .bind(&params.execution_id)
+            .bind(&params.policy_source)
+            .bind(&params.evaluated_snapshot_hash)
+            .bind(&params.original_verdict)
+            .bind(&params.replay_verdict)
+            .bind(&params.original_policy_name)
+            .bind(&params.replay_policy_name)
+            .bind(&params.original_rule_field)
+            .bind(&params.replay_rule_field)
+            .bind(params.verdict_changed)
             .execute(&self.pool),
         )
         .await
