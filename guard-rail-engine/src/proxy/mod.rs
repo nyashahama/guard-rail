@@ -27,6 +27,9 @@ pub struct AppState {
     pub audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
     pub route_config_hash: String,
     pub policy_set_hash: String,
+    pub admin_token: Option<String>,
+    pub tenant_repo: Option<crate::tenant::repository::TenantRepository>,
+    pub tenant_cache: Option<crate::tenant::cache::TenantAuthCache>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -375,6 +378,10 @@ pub fn compute_state(
         hash_string("")
     };
 
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy("postgres://localhost:5432/test");
+
     AppState {
         routes: Arc::new(RwLock::new(route_table)),
         policies: Arc::new(RwLock::new(policy_set)),
@@ -382,5 +389,8 @@ pub fn compute_state(
         audit_store,
         route_config_hash,
         policy_set_hash,
+        admin_token: None,
+        tenant_repo: pool.ok().map(crate::tenant::repository::TenantRepository::new),
+        tenant_cache: Some(crate::tenant::cache::TenantAuthCache::default()),
     }
 }

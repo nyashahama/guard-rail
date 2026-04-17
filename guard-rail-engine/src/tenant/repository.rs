@@ -1,6 +1,9 @@
 use crate::auth::api_keys::{generate_api_key, hash_api_key, key_prefix, IssuedApiKey};
+use crate::tenant::cache::{CachedApiKey, TenantAuthSnapshot};
 use crate::tenant::Tenant;
+use sqlx::Row;
 
+#[derive(Clone)]
 pub struct TenantRepository {
     pool: sqlx::PgPool,
 }
@@ -61,6 +64,88 @@ impl TenantRepository {
             name: name.to_string(),
             key_prefix,
             raw_key,
+        })
+    }
+
+    pub async fn bind_route(&self, route_id: &str, tenant_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            insert into tenant_routes (route_id, tenant_id)
+            values ($1, $2)
+            on conflict (route_id) do update
+            set tenant_id = excluded.tenant_id,
+                updated_at = now()
+            "#,
+        )
+        .bind(route_id)
+        .bind(tenant_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn revoke_api_key(
+        &self,
+        key_id: uuid::Uuid,
+        reason: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("update api_keys set revoked_at = now(), revoked_reason = $2 where id = $1")
+            .bind(key_id)
+            .bind(reason)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn load_auth_snapshot(&self) -> Result<TenantAuthSnapshot, sqlx::Error> {
+        let route_rows = sqlx::query("select route_id, tenant_id from tenant_routes")
+            .fetch_all(&self.pool)
+            .await?;
+        let key_rows = sqlx::query(
+            r#"
+            select
+                api_keys.id,
+                api_keys.tenant_id,
+                api_keys.key_hash,
+                api_keys.key_prefix,
+                api_keys.name,
+                api_keys.revoked_at,
+                tenants.status as tenant_status
+            from api_keys
+            join tenants on tenants.id = api_keys.tenant_id
+            where api_keys.revoked_at is null
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let route_bindings = route_rows
+            .into_iter()
+            .map(|row| {
+                let route_id: String = row.get("route_id");
+                let tenant_id: uuid::Uuid = row.get("tenant_id");
+                (route_id, tenant_id)
+            })
+            .collect();
+
+        let api_keys = key_rows
+            .into_iter()
+            .map(|row| {
+                let key_hash: String = row.get("key_hash");
+                let cached = CachedApiKey {
+                    id: row.get("id"),
+                    tenant_id: row.get("tenant_id"),
+                    name: row.get("name"),
+                    key_prefix: row.get("key_prefix"),
+                    tenant_status: row.get("tenant_status"),
+                };
+                (key_hash, cached)
+            })
+            .collect();
+
+        Ok(TenantAuthSnapshot {
+            route_bindings,
+            api_keys,
         })
     }
 }

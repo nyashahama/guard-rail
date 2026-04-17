@@ -28,3 +28,33 @@ async fn test_create_tenant_and_api_key_persists_hash_only() {
     assert_ne!(key_hash, issued.raw_key);
     assert_eq!(key_prefix, issued.key_prefix);
 }
+
+#[tokio::test]
+async fn test_load_auth_cache_returns_only_active_keys_and_bindings() {
+    let database_url =
+        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
+    let unique_name = format!("acme_{}", uuid::Uuid::new_v4());
+    let tenant = repo.create_tenant(&unique_name).await.unwrap();
+    let issued = repo.create_api_key(tenant.id, "primary").await.unwrap();
+    let unique_route = format!("test-route-{}", uuid::Uuid::new_v4());
+    repo.bind_route(&unique_route, tenant.id).await.unwrap();
+    repo.revoke_api_key(issued.id, Some("rotated")).await.unwrap();
+
+    let snapshot = repo.load_auth_snapshot().await.unwrap();
+    assert!(snapshot.route_bindings.contains_key(&unique_route));
+    assert!(
+        !snapshot
+            .api_keys
+            .values()
+            .any(|k| k.id == issued.id),
+        "revoked key should not be in cache"
+    );
+}

@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod repository;
 
 use serde::{Deserialize, Serialize};
