@@ -102,6 +102,7 @@ policies:
         ),
         tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
         rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     let app = Router::new()
@@ -152,6 +153,7 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(pool),
         tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
         rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)

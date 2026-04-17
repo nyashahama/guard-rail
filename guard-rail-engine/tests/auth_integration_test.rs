@@ -79,12 +79,14 @@ async fn start_mock_upstream(status: u16, body: &'static str) -> String {
     format!("http://{}", addr)
 }
 
+#[allow(dead_code)]
 struct Stage3TestApp {
     base_url: String,
     store: guard_rail_engine::storage::postgres::PostgresAuditStore,
     tenant_a_id: uuid::Uuid,
     tenant_a_key_id: uuid::Uuid,
     tenant_a_key: String,
+    #[allow(dead_code)]
     tenant_b_id: uuid::Uuid,
     tenant_b_key: String,
 }
@@ -178,6 +180,7 @@ routes:
             requests_per_minute,
             burst,
         ),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     let app =

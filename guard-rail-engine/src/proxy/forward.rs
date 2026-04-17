@@ -6,6 +6,7 @@ use std::time::Duration;
 pub struct ForwardResult {
     pub status: u16,
     pub response: Response,
+    pub body_bytes: bytes::Bytes,
 }
 
 pub async fn forward_request(
@@ -67,11 +68,15 @@ pub async fn forward_request(
     builder = builder.header("x-guardrail-execution-id", execution_id);
 
     let response = builder
-        .body(axum::body::Body::from(resp_body))
+        .body(axum::body::Body::from(resp_body.clone()))
         .map_err(|e| format!("Failed to build response: {}", e))?
         .into_response();
 
-    Ok(ForwardResult { status, response })
+    Ok(ForwardResult {
+        status,
+        response,
+        body_bytes: resp_body,
+    })
 }
 
 fn reqwest_headers(axum_headers: &HeaderMap) -> reqwest::header::HeaderMap {

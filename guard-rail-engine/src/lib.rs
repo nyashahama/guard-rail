@@ -6,6 +6,7 @@ pub mod logging;
 pub mod policy;
 pub mod proxy;
 pub mod reload;
+pub mod replay;
 pub mod routes;
 pub mod storage;
 pub mod tenant;

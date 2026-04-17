@@ -4,10 +4,12 @@ pub mod response;
 use crate::audit::hash::{hash_body, hash_string};
 use crate::auth::context::{RequestAuthContext, authenticate_tenant_request};
 use crate::auth::rate_limit::TenantRateLimiter;
+use crate::config::ReplayConfig;
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
+use crate::replay::snapshot;
 use crate::routes::RouteTable;
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
@@ -24,6 +26,18 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+pub struct ReplayArtifacts {
+    pub snapshot_hash: String,
+    pub request_body_json: serde_json::Value,
+    pub request_headers: serde_json::Value,
+    pub response_status: Option<u16>,
+    pub response_headers: Option<serde_json::Value>,
+    pub response_body: Option<String>,
+    pub response_body_sha256: Option<String>,
+    pub response_body_truncated: bool,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub routes: Arc<RwLock<RouteTable>>,
@@ -36,6 +50,7 @@ pub struct AppState {
     pub tenant_repo: crate::tenant::repository::TenantRepository,
     pub tenant_cache: crate::tenant::cache::TenantAuthCache,
     pub rate_limiter: crate::auth::rate_limit::TenantRateLimiter,
+    pub replay: ReplayConfig,
 }
 
 unsafe impl Send for AppState {}
@@ -79,6 +94,26 @@ fn spawn_emit_and_persist(
         tokio::spawn(async move {
             if let Err(e) = store.insert_execution(&record).await {
                 eprintln!("Failed to persist execution: {}", e);
+            }
+        });
+    }
+}
+
+fn spawn_emit_and_persist_bundle(
+    record: ExecutionRecord,
+    artifacts: Option<ReplayArtifacts>,
+    snapshot: Option<snapshot::PolicySnapshotRecord>,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+) {
+    let log = ExecutionLog::from(&record);
+    log.emit();
+    if let Some(store) = audit_store {
+        tokio::spawn(async move {
+            if let Err(e) = store
+                .insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref())
+                .await
+            {
+                eprintln!("Failed to persist execution bundle: {}", e);
             }
         });
     }
@@ -346,7 +381,33 @@ pub async fn handle_execute(
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
-            spawn_emit_and_persist(record, state.audit_store.clone());
+
+            if state.replay.enabled {
+                let capture_request_headers =
+                    snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+                let policies = state.policies.read().await;
+                let snapshot = snapshot::build_snapshot_from_set(&route, &policies)
+                    .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
+                drop(policies);
+                let artifacts = ReplayArtifacts {
+                    snapshot_hash: snapshot.snapshot_hash.clone(),
+                    request_body_json: payload.clone(),
+                    request_headers: capture_request_headers,
+                    response_status: None,
+                    response_headers: None,
+                    response_body: None,
+                    response_body_sha256: None,
+                    response_body_truncated: false,
+                };
+                spawn_emit_and_persist_bundle(
+                    record,
+                    Some(artifacts),
+                    Some(snapshot),
+                    state.audit_store.clone(),
+                );
+            } else {
+                spawn_emit_and_persist(record, state.audit_store.clone());
+            }
             return response::block_response(&execution_id, &policy_name, &rule_field, &message);
         }
         Verdict::Allow => {}
@@ -354,6 +415,18 @@ pub async fn handle_execute(
 
     // 5. Forward to upstream
     let forward_start = Instant::now();
+
+    let (snapshot, request_headers_for_artifact) = if state.replay.enabled {
+        let capture_request_headers =
+            snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+        let policies = state.policies.read().await;
+        let sp = snapshot::build_snapshot_from_set(&route, &policies)
+            .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
+        drop(policies);
+        (Some(sp), Some(capture_request_headers))
+    } else {
+        (None, None)
+    };
 
     match forward::forward_request(
         &state.http_client,
@@ -398,7 +471,45 @@ pub async fn handle_execute(
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
-            spawn_emit_and_persist(record, state.audit_store.clone());
+
+            if state.replay.enabled {
+                let response_body_bytes = result.body_bytes;
+                let response_body_str = String::from_utf8_lossy(&response_body_bytes).to_string();
+                let max_len = state.replay.max_response_body_bytes;
+                let (response_body, response_body_sha256, truncated) =
+                    if response_body_str.len() > max_len {
+                        let truncated_body = response_body_str[..max_len].to_string();
+                        let sha = Some(hash_string(&truncated_body));
+                        (truncated_body, sha, true)
+                    } else {
+                        let sha = Some(hash_string(&response_body_str));
+                        (response_body_str.clone(), sha, false)
+                    };
+
+                let response_headers = snapshot::filter_headers(
+                    result.response.headers(),
+                    &state.replay.capture_response_headers,
+                );
+
+                let artifacts = ReplayArtifacts {
+                    snapshot_hash: snapshot.as_ref().unwrap().snapshot_hash.clone(),
+                    request_body_json: payload.clone(),
+                    request_headers: request_headers_for_artifact.unwrap(),
+                    response_status: Some(result.status),
+                    response_headers: Some(response_headers),
+                    response_body: Some(response_body),
+                    response_body_sha256,
+                    response_body_truncated: truncated,
+                };
+                spawn_emit_and_persist_bundle(
+                    record,
+                    Some(artifacts),
+                    snapshot,
+                    state.audit_store.clone(),
+                );
+            } else {
+                spawn_emit_and_persist(record, state.audit_store.clone());
+            }
             result.response
         }
         Err(e) => {
@@ -528,12 +639,24 @@ pub fn build_router(
             crate::auth::middleware::require_admin_token,
         ));
 
+    let replay_routes = axum::Router::new()
+        .route(
+            "/v1/replay/executions/{execution_id}",
+            axum::routing::post(crate::replay::api::create_replay)
+                .get(crate::replay::api::get_replay_summary),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::require_audit_access,
+        ));
+
     let main_router = axum::Router::new()
         .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .merge(audit_routes)
         .merge(audit_admin_routes)
         .merge(admin_routes)
+        .merge(replay_routes)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             request_body_limit_bytes,
         ));
@@ -559,6 +682,7 @@ impl AppState {
             tenant_repo: TenantRepository::new(pool),
             tenant_cache: TenantAuthCache::default(),
             rate_limiter: TenantRateLimiter::new(0, 0),
+            replay: ReplayConfig::default(),
         }
     }
 }
@@ -636,5 +760,6 @@ pub fn compute_state(
             }),
         tenant_cache: crate::tenant::cache::TenantAuthCache::default(),
         rate_limiter: crate::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: ReplayConfig::default(),
     }
 }

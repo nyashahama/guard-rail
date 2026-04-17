@@ -6,6 +6,7 @@ mod logging;
 mod policy;
 mod proxy;
 mod reload;
+mod replay;
 mod routes;
 mod storage;
 mod tenant;
@@ -38,33 +39,6 @@ struct Cli {
 
     #[arg(short, long, default_value = "./config/config.yaml", global = true)]
     config: PathBuf,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[test]
-    fn test_migrate_command_parses() {
-        let cli = Cli::try_parse_from([
-            "guard-rail-engine",
-            "migrate",
-            "--config",
-            "./config/config.yaml",
-        ])
-        .unwrap();
-
-        assert!(matches!(cli.command, Some(Command::Migrate)));
-        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
-    }
-
-    #[test]
-    fn test_serve_is_default_command() {
-        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
-        let command = cli.command.unwrap_or_default();
-        assert!(matches!(command, Command::Serve));
-    }
 }
 
 #[tokio::main]
@@ -183,6 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_config.rate_limit.requests_per_minute,
             app_config.rate_limit.burst,
         ),
+        replay: app_config.replay.clone(),
     };
 
     let app = proxy::build_router(
@@ -204,4 +179,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_migrate_command_parses() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "migrate",
+            "--config",
+            "./config/config.yaml",
+        ])
+        .unwrap();
+
+        assert!(matches!(cli.command, Some(Command::Migrate)));
+        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    fn test_serve_is_default_command() {
+        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
+        let command = cli.command.unwrap_or_default();
+        assert!(matches!(command, Command::Serve));
+    }
 }

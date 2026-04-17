@@ -179,6 +179,81 @@ impl PostgresAuditStore {
         }))
     }
 
+    pub async fn get_execution_detail(
+        &self,
+        execution_id: &str,
+    ) -> Result<Option<crate::audit::api::ExecutionAuditDetail>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            select
+                ea.execution_id, ea.execution_started_at, ea.route_id, ea.tenant_id, ea.api_key_id, ea.auth_outcome,
+                ea.upstream_url, ea.method, ea.source_ip, ea.content_type, ea.user_agent,
+                ea.had_authorization_header, ea.request_size_bytes, ea.request_body_sha256,
+                ea.verdict, ea.rejection_reason, ea.matched_policy_name, ea.matched_rule_field,
+                ea.matched_rule_condition, ea.matched_rule_severity, ea.violation_value_hash,
+                ea.violation_value_preview, ea.upstream_status, ea.forward_error,
+                ea.latency_inspect_us, ea.latency_forward_ms, ea.latency_total_ms,
+                ea.route_config_hash, ea.policy_set_hash, ea.previous_hash, ea.record_hash,
+                art.snapshot_hash,
+                exists(select 1 from execution_artifacts where execution_id = ea.execution_id) as replay_available,
+                (
+                    select rr.id
+                    from replay_runs rr
+                    where rr.execution_id = ea.execution_id
+                    order by rr.created_at desc
+                    limit 1
+                ) as latest_replay_run_id
+            from execution_audit ea
+            left join execution_artifacts art on art.execution_id = ea.execution_id
+            where ea.execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| crate::audit::api::ExecutionAuditDetail {
+            row: ExecutionAuditRow {
+                execution_id: r.get("execution_id"),
+                execution_started_at: r.get("execution_started_at"),
+                route_id: r.get("route_id"),
+                tenant_id: r.get("tenant_id"),
+                api_key_id: r.get("api_key_id"),
+                auth_outcome: r.get("auth_outcome"),
+                upstream_url: r.get("upstream_url"),
+                method: r.get("method"),
+                source_ip: r.get("source_ip"),
+                content_type: r.get("content_type"),
+                user_agent: r.get("user_agent"),
+                had_authorization_header: r.get("had_authorization_header"),
+                request_size_bytes: r.get::<i64, _>("request_size_bytes") as usize,
+                request_body_sha256: r.get("request_body_sha256"),
+                verdict: r.get("verdict"),
+                rejection_reason: r.get("rejection_reason"),
+                matched_policy_name: r.get("matched_policy_name"),
+                matched_rule_field: r.get("matched_rule_field"),
+                matched_rule_condition: r.get("matched_rule_condition"),
+                matched_rule_severity: r.get("matched_rule_severity"),
+                violation_value_hash: r.get("violation_value_hash"),
+                violation_value_preview: r.get("violation_value_preview"),
+                upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
+                forward_error: r.get("forward_error"),
+                latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
+                latency_forward_ms: r
+                    .get::<Option<i64>, _>("latency_forward_ms")
+                    .map(|v| v as u128),
+                latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
+                route_config_hash: r.get("route_config_hash"),
+                policy_set_hash: r.get("policy_set_hash"),
+                previous_hash: r.get("previous_hash"),
+                record_hash: r.get("record_hash"),
+            },
+            replay_available: r.get("replay_available"),
+            snapshot_hash: r.get("snapshot_hash"),
+            latest_replay_run_id: r.get("latest_replay_run_id"),
+        }))
+    }
+
     pub async fn count_executions(&self) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("select count(*) from execution_audit")
             .fetch_one(&self.pool)
@@ -322,6 +397,146 @@ impl PostgresAuditStore {
         })
     }
 
+    pub async fn insert_execution_bundle(
+        &self,
+        record: &crate::execution::ExecutionRecord,
+        artifacts: Option<&crate::proxy::ReplayArtifacts>,
+        snapshot: Option<&crate::replay::snapshot::PolicySnapshotRecord>,
+    ) -> Result<(), sqlx::Error> {
+        if let Some(snap) = snapshot {
+            tokio::time::timeout(
+                self.write_timeout,
+                sqlx::query(
+                    r#"
+                    insert into policy_snapshots (
+                        snapshot_hash, route_id, route_definition, policies_definition,
+                        route_config_hash, policy_set_hash
+                    ) values ($1, $2, $3, $4, $5, $6)
+                    on conflict (snapshot_hash) do nothing
+                    "#,
+                )
+                .bind(&snap.snapshot_hash)
+                .bind(&snap.route_id)
+                .bind(&snap.route_definition)
+                .bind(&snap.policies_definition)
+                .bind(&snap.route_config_hash)
+                .bind(&snap.policy_set_hash)
+                .execute(&self.pool),
+            )
+            .await
+            .map_err(|_| sqlx::Error::Protocol("snapshot insert timed out".into()))??;
+        }
+
+        if let Some(art) = artifacts {
+            tokio::time::timeout(
+                self.write_timeout,
+                sqlx::query(
+                    r#"
+                    insert into execution_artifacts (
+                        execution_id, snapshot_hash, request_body_json, request_headers,
+                        response_status, response_headers, response_body,
+                        response_body_sha256, response_body_truncated
+                    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    on conflict (execution_id) do update set
+                        snapshot_hash = excluded.snapshot_hash,
+                        request_body_json = excluded.request_body_json,
+                        request_headers = excluded.request_headers,
+                        response_status = excluded.response_status,
+                        response_headers = excluded.response_headers,
+                        response_body = excluded.response_body,
+                        response_body_sha256 = excluded.response_body_sha256,
+                        response_body_truncated = excluded.response_body_truncated
+                    "#,
+                )
+                .bind(&record.execution_id)
+                .bind(&art.snapshot_hash)
+                .bind(&art.request_body_json)
+                .bind(&art.request_headers)
+                .bind(art.response_status.map(i32::from))
+                .bind(&art.response_headers)
+                .bind(&art.response_body)
+                .bind(&art.response_body_sha256)
+                .bind(art.response_body_truncated)
+                .execute(&self.pool),
+            )
+            .await
+            .map_err(|_| sqlx::Error::Protocol("artifact insert timed out".into()))??;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_execution_artifacts(
+        &self,
+        execution_id: &str,
+    ) -> Result<Option<ExecutionArtifactRow>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            select
+                ea.execution_id, ea.snapshot_hash, ea.request_body_json, ea.request_headers,
+                ea.response_status, ea.response_headers, ea.response_body,
+                ea.response_body_sha256, ea.response_body_truncated, ea.created_at,
+                ps.route_definition, ps.policies_definition
+            from execution_artifacts ea
+            join policy_snapshots ps on ps.snapshot_hash = ea.snapshot_hash
+            where ea.execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| ExecutionArtifactRow {
+            execution_id: r.get("execution_id"),
+            snapshot_hash: r.get("snapshot_hash"),
+            request_body_json: r.get("request_body_json"),
+            request_headers: r.get("request_headers"),
+            response_status: r.get::<Option<i32>, _>("response_status").map(|v| v as u16),
+            response_headers: r.get("response_headers"),
+            response_body: r.get("response_body"),
+            response_body_sha256: r.get("response_body_sha256"),
+            response_body_truncated: r.get("response_body_truncated"),
+            created_at: r.get("created_at"),
+            route_definition: r.get("route_definition"),
+            policies_definition: r.get("policies_definition"),
+        }))
+    }
+
+    pub async fn insert_replay_run(
+        &self,
+        params: &crate::replay::engine::ReplayRunParams,
+    ) -> Result<(), sqlx::Error> {
+        tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                insert into replay_runs (
+                    id, execution_id, policy_source, evaluated_snapshot_hash,
+                    original_verdict, replay_verdict, original_policy_name,
+                    replay_policy_name, original_rule_field, replay_rule_field,
+                    verdict_changed
+                ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                "#,
+            )
+            .bind(&params.id)
+            .bind(&params.execution_id)
+            .bind(&params.policy_source)
+            .bind(&params.evaluated_snapshot_hash)
+            .bind(&params.original_verdict)
+            .bind(&params.replay_verdict)
+            .bind(&params.original_policy_name)
+            .bind(&params.replay_policy_name)
+            .bind(&params.original_rule_field)
+            .bind(&params.replay_rule_field)
+            .bind(params.verdict_changed)
+            .execute(&self.pool),
+        )
+        .await
+        .map_err(|_| sqlx::Error::Protocol("replay run insert timed out".into()))??;
+
+        Ok(())
+    }
+
     pub async fn verify_integrity(
         &self,
         query: crate::audit::api::IntegrityQuery,
@@ -405,4 +620,20 @@ pub struct ExecutionAuditRow {
     pub policy_set_hash: String,
     pub previous_hash: Option<String>,
     pub record_hash: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecutionArtifactRow {
+    pub execution_id: String,
+    pub snapshot_hash: String,
+    pub request_body_json: serde_json::Value,
+    pub request_headers: serde_json::Value,
+    pub response_status: Option<u16>,
+    pub response_headers: Option<serde_json::Value>,
+    pub response_body: Option<String>,
+    pub response_body_sha256: Option<String>,
+    pub response_body_truncated: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub route_definition: serde_json::Value,
+    pub policies_definition: serde_json::Value,
 }

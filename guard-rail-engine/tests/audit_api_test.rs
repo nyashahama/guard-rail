@@ -1,8 +1,5 @@
-use guard_rail_engine::auth::rate_limit::TenantRateLimiter;
 use guard_rail_engine::execution::{ExecutionRecord, ExecutionVerdict};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
-use guard_rail_engine::tenant::cache::TenantAuthCache;
-use guard_rail_engine::tenant::repository::TenantRepository;
 use tower::util::ServiceExt;
 
 async fn start_mock_upstream(status: u16, body: &'static str) -> String {
@@ -108,6 +105,7 @@ policies:
         ),
         tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
         rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     let app = axum::Router::new()
@@ -176,6 +174,7 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         ),
         tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
         rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
@@ -491,8 +490,9 @@ routes:
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
         admin_token: "stage2-admin-token".to_string(),
         tenant_repo: repo,
-        tenant_cache: tenant_cache,
+        tenant_cache,
         rate_limiter: TenantRateLimiter::new(requests_per_minute, burst),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
     let app =
@@ -527,11 +527,13 @@ struct Stage3TestHarness {
 
 #[tokio::test]
 async fn test_tenant_audit_list_returns_only_owned_rows() {
+    #[allow(dead_code)]
     struct AuditListView {
         items: serde_json::Value,
     }
 
     impl AuditListView {
+        #[allow(dead_code)]
         fn contains_auth_outcome(&self, needle: &str) -> bool {
             self.items
                 .as_array()
