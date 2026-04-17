@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimePhase {
+    #[default]
     Starting,
     Ready,
     Draining,
@@ -10,6 +11,7 @@ pub enum RuntimePhase {
 }
 
 impl RuntimePhase {
+    #[cfg(test)]
     pub fn as_str(&self) -> &'static str {
         match self {
             RuntimePhase::Starting => "starting",
@@ -20,15 +22,17 @@ impl RuntimePhase {
     }
 }
 
-impl Default for RuntimePhase {
-    fn default() -> Self {
-        RuntimePhase::Starting
-    }
-}
+
 
 #[derive(Clone, Debug)]
 pub struct LifecycleState {
     phase: Arc<RwLock<RuntimePhase>>,
+}
+
+impl Default for LifecycleState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LifecycleState {

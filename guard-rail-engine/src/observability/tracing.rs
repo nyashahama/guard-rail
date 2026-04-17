@@ -56,10 +56,11 @@ fn parse_trace_id(value: &str, trace_header_name: &str) -> String {
         let trace_id = parts.next();
         let span_id = parts.next();
         let flags = parts.next();
-        if let (Some(trace_id), Some(_span_id), Some(_flags)) = (trace_id, span_id, flags) {
-            if trace_id.len() == 32 && trace_id.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                return trace_id.to_string();
-            }
+        if let (Some(trace_id), Some(_span_id), Some(_flags)) = (trace_id, span_id, flags)
+            && trace_id.len() == 32
+            && trace_id.chars().all(|ch| ch.is_ascii_hexdigit())
+        {
+            return trace_id.to_string();
         }
     }
 
