@@ -86,13 +86,16 @@ policies:
     let route_table = guard_rail_engine::routes::RouteTable::load(&routes_path).unwrap();
     let policy_set = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
 
-    let state = guard_rail_engine::proxy::AppState {
+let state = guard_rail_engine::proxy::AppState {
         routes: Arc::new(RwLock::new(route_table)),
         policies: Arc::new(RwLock::new(policy_set)),
         http_client: Client::new(),
         audit_store: None,
         route_config_hash: guard_rail_engine::audit::hash::hash_string("test"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("test"),
+        admin_token: None,
+        tenant_repo: None,
+        tenant_cache: None,
     };
 
     let app = Router::new()
@@ -135,6 +138,9 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         audit_store: None,
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: None,
+        tenant_repo: None,
+        tenant_cache: None,
     };
 
     guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)

@@ -48,6 +48,12 @@ pub struct PolicySet {
 }
 
 impl PolicySet {
+    pub fn new() -> Self {
+        Self {
+            by_name: HashMap::new(),
+        }
+    }
+
     pub fn load_dir(dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let mut by_name = HashMap::new();
 

@@ -288,3 +288,81 @@ async fn test_tenant_rate_limit_returns_429_without_blocking_other_tenant() {
     assert_eq!(second.status(), 429);
     assert_eq!(other.status(), 200);
 }
+
+#[tokio::test]
+async fn test_admin_can_create_tenant_issue_key_and_bind_route() {
+    let harness = start_stage3_test_app(120, 30).await;
+
+    let tenant = harness
+        .admin_post("/v1/admin/tenants", r#"{"name":"acme"}"#)
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    let tenant_id = tenant["id"].as_str().unwrap();
+
+    let key = harness
+        .admin_post(
+            &format!("/v1/admin/tenants/{tenant_id}/keys"),
+            r#"{"name":"primary"}"#,
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    harness
+        .admin_post(
+            &format!("/v1/admin/tenants/{tenant_id}/routes"),
+            r#"{"route_id":"test-route"}"#,
+        )
+        .await;
+
+    let raw_key = key["raw_key"].as_str().unwrap();
+    let execute = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", raw_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(execute.status(), 200);
+}
+
+#[tokio::test]
+async fn test_revoked_key_stops_working_immediately_after_admin_write() {
+    let harness = start_stage3_test_app(120, 30).await;
+
+    let before = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(before.status(), 200);
+
+    harness
+        .admin_post(
+            &format!(
+                "/v1/admin/tenants/{}/keys/{}/revoke",
+                harness.tenant_a_id, harness.tenant_a_key_id
+            ),
+            r#"{"reason":"rotated"}"#,
+        )
+        .await;
+
+    let after = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after.status(), 401);
+}

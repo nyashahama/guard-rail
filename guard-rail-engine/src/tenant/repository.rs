@@ -97,6 +97,55 @@ impl TenantRepository {
         Ok(())
     }
 
+    pub async fn list_tenants(&self) -> Result<Vec<Tenant>, sqlx::Error> {
+        let rows = sqlx::query("select id, name, status, created_at, disabled_at from tenants order by created_at desc")
+            .fetch_all(&self.pool)
+            .await?;
+
+        let tenants = rows
+            .into_iter()
+            .map(|row| Tenant {
+                id: row.get("id"),
+                name: row.get("name"),
+                status: row.get("status"),
+                created_at: row.get("created_at"),
+                disabled_at: row.get("disabled_at"),
+            })
+            .collect();
+
+        Ok(tenants)
+    }
+
+    pub async fn list_api_keys(
+        &self,
+        tenant_id: uuid::Uuid,
+    ) -> Result<Vec<super::api::ApiKeyListItem>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            select id, name, key_prefix, created_at, revoked_at
+            from api_keys
+            where tenant_id = $1
+            order by created_at desc
+            "#,
+        )
+        .bind(tenant_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let keys = rows
+            .into_iter()
+            .map(|row| super::api::ApiKeyListItem {
+                id: row.get("id"),
+                name: row.get("name"),
+                key_prefix: row.get("key_prefix"),
+                created_at: row.get("created_at"),
+                revoked_at: row.get("revoked_at"),
+            })
+            .collect();
+
+        Ok(keys)
+    }
+
     pub async fn load_auth_snapshot(&self) -> Result<TenantAuthSnapshot, sqlx::Error> {
         let route_rows = sqlx::query("select route_id, tenant_id from tenant_routes")
             .fetch_all(&self.pool)
