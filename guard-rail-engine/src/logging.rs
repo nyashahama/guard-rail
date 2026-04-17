@@ -81,7 +81,15 @@ impl ExecutionLog {
 
     pub fn emit(&self) {
         if let Ok(json) = serde_json::to_string(self) {
-            println!("{}", json);
+            tracing::info!(
+                execution_id = %self.execution_id,
+                route_id = %self.route_id,
+                method = %self.method,
+                source_ip = %self.source_ip,
+                verdict = %self.verdict,
+                payload = %json,
+                "execution log"
+            );
         }
     }
 }
@@ -173,5 +181,48 @@ mod tests {
         assert_eq!(log.verdict, "BLOCKED");
         assert_eq!(log.policy, Some("block-transfer".to_string()));
         assert_eq!(log.violation_value, Some("https://evil.com".to_string()));
+    }
+
+    #[test]
+    fn test_execution_log_emit_uses_tracing_fields() {
+        use crate::execution::{ExecutionRecord, ExecutionVerdict};
+        use uuid::Uuid;
+
+        let record = ExecutionRecord {
+            execution_id: "GR-EXE-555".to_string(),
+            execution_started_at: chrono::Utc::now(),
+            route_id: "route-a".to_string(),
+            tenant_id: Some(Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap()),
+            api_key_id: Some(Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap()),
+            auth_outcome: None,
+            upstream_url: Some("https://internal".to_string()),
+            method: "POST".to_string(),
+            source_ip: "127.0.0.1".to_string(),
+            content_type: Some("application/json".to_string()),
+            user_agent: Some("test".to_string()),
+            had_authorization_header: true,
+            request_size_bytes: 20,
+            request_body_sha256: "hash".to_string(),
+            verdict: ExecutionVerdict::Allowed,
+            rejection_reason: None,
+            matched_policy_name: None,
+            matched_rule_field: None,
+            matched_rule_condition: None,
+            matched_rule_severity: None,
+            violation_value_hash: None,
+            violation_value_preview: None,
+            upstream_status: Some(200),
+            forward_error: None,
+            latency_inspect_us: 10,
+            latency_forward_ms: Some(5),
+            latency_total_ms: 5,
+            route_config_hash: "route-hash".to_string(),
+            policy_set_hash: "policy-hash".to_string(),
+        };
+
+        let log = ExecutionLog::from(&record);
+        let json = serde_json::to_string(&log).unwrap();
+        assert!(json.contains("\"execution_id\":\"GR-EXE-555\""));
+        assert!(json.contains("\"route_id\":\"route-a\""));
     }
 }
