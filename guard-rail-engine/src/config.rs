@@ -15,6 +15,10 @@ pub struct AppConfig {
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
     pub replay: ReplayConfig,
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
+    #[serde(default)]
+    pub shutdown: ShutdownConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,6 +150,77 @@ fn default_max_response_body_bytes() -> usize {
     65_536
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObservabilityConfig {
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+    #[serde(default = "default_metrics_enabled")]
+    pub metrics_enabled: bool,
+    #[serde(default = "default_metrics_path")]
+    pub metrics_path: String,
+    #[serde(default = "default_trace_header_name")]
+    pub trace_header_name: String,
+    #[serde(default = "default_readiness_probe_timeout_ms")]
+    pub readiness_probe_timeout_ms: u64,
+}
+
+fn default_service_name() -> String {
+    "guard-rail-engine".to_string()
+}
+
+fn default_metrics_enabled() -> bool {
+    true
+}
+
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
+
+fn default_trace_header_name() -> String {
+    "traceparent".to_string()
+}
+
+fn default_readiness_probe_timeout_ms() -> u64 {
+    250
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            service_name: default_service_name(),
+            metrics_enabled: default_metrics_enabled(),
+            metrics_path: default_metrics_path(),
+            trace_header_name: default_trace_header_name(),
+            readiness_probe_timeout_ms: default_readiness_probe_timeout_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShutdownConfig {
+    #[serde(default = "default_grace_period_ms")]
+    pub grace_period_ms: u64,
+    #[serde(default = "default_drain_poll_interval_ms")]
+    pub drain_poll_interval_ms: u64,
+}
+
+fn default_grace_period_ms() -> u64 {
+    15_000
+}
+
+fn default_drain_poll_interval_ms() -> u64 {
+    50
+}
+
+impl Default for ShutdownConfig {
+    fn default() -> Self {
+        Self {
+            grace_period_ms: default_grace_period_ms(),
+            drain_poll_interval_ms: default_drain_poll_interval_ms(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
@@ -185,6 +260,27 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_REPLAY__ENABLED") {
             config.replay.enabled = val.parse()?;
         }
+        if let Ok(val) = std::env::var("GUARDRAIL_OBSERVABILITY__SERVICE_NAME") {
+            config.observability.service_name = val;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_OBSERVABILITY__METRICS_ENABLED") {
+            config.observability.metrics_enabled = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_OBSERVABILITY__METRICS_PATH") {
+            config.observability.metrics_path = val;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_OBSERVABILITY__TRACE_HEADER_NAME") {
+            config.observability.trace_header_name = val;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_OBSERVABILITY__READINESS_PROBE_TIMEOUT_MS") {
+            config.observability.readiness_probe_timeout_ms = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_SHUTDOWN__GRACE_PERIOD_MS") {
+            config.shutdown.grace_period_ms = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_SHUTDOWN__DRAIN_POLL_INTERVAL_MS") {
+            config.shutdown.drain_poll_interval_ms = val.parse()?;
+        }
 
         Ok(config)
     }
@@ -218,6 +314,13 @@ mod tests {
             std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
             std::env::remove_var("GUARDRAIL_RATE_LIMIT__BURST");
             std::env::remove_var("GUARDRAIL_REPLAY__ENABLED");
+            std::env::remove_var("GUARDRAIL_OBSERVABILITY__SERVICE_NAME");
+            std::env::remove_var("GUARDRAIL_OBSERVABILITY__METRICS_ENABLED");
+            std::env::remove_var("GUARDRAIL_OBSERVABILITY__METRICS_PATH");
+            std::env::remove_var("GUARDRAIL_OBSERVABILITY__TRACE_HEADER_NAME");
+            std::env::remove_var("GUARDRAIL_OBSERVABILITY__READINESS_PROBE_TIMEOUT_MS");
+            std::env::remove_var("GUARDRAIL_SHUTDOWN__GRACE_PERIOD_MS");
+            std::env::remove_var("GUARDRAIL_SHUTDOWN__DRAIN_POLL_INTERVAL_MS");
         }
     }
 
@@ -384,6 +487,44 @@ replay:
         assert!(config.replay.enabled);
         assert_eq!(config.replay.capture_request_headers.len(), 3);
         assert_eq!(config.replay.max_response_body_bytes, 65536);
+    }
+
+    #[test]
+    fn test_load_config_with_stage5_sections() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+tenant_auth: {}
+rate_limit: {}
+replay: {}
+observability:
+  service_name: "guard-rail-engine"
+  metrics_enabled: true
+  metrics_path: "/metrics"
+  trace_header_name: "traceparent"
+  readiness_probe_timeout_ms: 250
+shutdown:
+  grace_period_ms: 15000
+  drain_poll_interval_ms: 50
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = crate::config::AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.observability.metrics_path, "/metrics");
+        assert_eq!(config.shutdown.grace_period_ms, 15_000);
     }
 
     #[test]

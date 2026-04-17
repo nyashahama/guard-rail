@@ -9,4 +9,5 @@ pub mod reload;
 pub mod replay;
 pub mod routes;
 pub mod storage;
+pub mod shutdown;
 pub mod tenant;
