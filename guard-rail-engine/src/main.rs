@@ -41,33 +41,6 @@ struct Cli {
     config: PathBuf,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[test]
-    fn test_migrate_command_parses() {
-        let cli = Cli::try_parse_from([
-            "guard-rail-engine",
-            "migrate",
-            "--config",
-            "./config/config.yaml",
-        ])
-        .unwrap();
-
-        assert!(matches!(cli.command, Some(Command::Migrate)));
-        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
-    }
-
-    #[test]
-    fn test_serve_is_default_command() {
-        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
-        let command = cli.command.unwrap_or_default();
-        assert!(matches!(command, Command::Serve));
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -206,4 +179,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_migrate_command_parses() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "migrate",
+            "--config",
+            "./config/config.yaml",
+        ])
+        .unwrap();
+
+        assert!(matches!(cli.command, Some(Command::Migrate)));
+        assert_eq!(cli.config, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    fn test_serve_is_default_command() {
+        let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
+        let command = cli.command.unwrap_or_default();
+        assert!(matches!(command, Command::Serve));
+    }
 }

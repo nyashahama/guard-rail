@@ -13,7 +13,7 @@ pub struct TestHarness {
     pub base_url: String,
     pub tenant_key: String,
     pub store: PostgresAuditStore,
-    pub state: Arc<RwLock<AppState>>,
+    pub state: AppState,
 }
 
 async fn start_stage4_test_app() -> TestHarness {
@@ -81,7 +81,7 @@ async fn start_stage4_test_app() -> TestHarness {
         },
     };
 
-    let app = guard_rail_engine::proxy::build_router(state, "test-admin".into(), 1_048_576);
+    let app = guard_rail_engine::proxy::build_router(state.clone(), "test-admin".into(), 1_048_576);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
