@@ -22,8 +22,6 @@ impl RuntimePhase {
     }
 }
 
-
-
 #[derive(Clone, Debug)]
 pub struct LifecycleState {
     phase: Arc<RwLock<RuntimePhase>>,
