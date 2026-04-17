@@ -58,3 +58,233 @@ async fn test_load_auth_cache_returns_only_active_keys_and_bindings() {
         "revoked key should not be in cache"
     );
 }
+
+fn write_file(dir: &std::path::Path, name: &str, contents: &str) {
+    std::fs::write(dir.join(name), contents).unwrap();
+}
+
+async fn start_mock_upstream(status: u16, body: &'static str) -> String {
+    let app = axum::Router::new().route(
+        "/{*path}",
+        axum::routing::any(move || async move {
+            (
+                axum::http::StatusCode::from_u16(status).unwrap(),
+                body.to_string(),
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{}", addr)
+}
+
+struct Stage3TestApp {
+    base_url: String,
+    store: guard_rail_engine::storage::postgres::PostgresAuditStore,
+    tenant_a_id: uuid::Uuid,
+    tenant_a_key_id: uuid::Uuid,
+    tenant_a_key: String,
+    tenant_b_id: uuid::Uuid,
+    tenant_b_key: String,
+}
+
+impl Stage3TestApp {
+    async fn admin_post(&self, path: &str, body: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("{}{}", self.base_url, path))
+            .header("authorization", "Bearer stage2-admin-token")
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+async fn start_stage3_test_app(
+    requests_per_minute: u32,
+    burst: u32,
+) -> Stage3TestApp {
+    let database_url =
+        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query("truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
+    let tenant_a = repo.create_tenant("tenant-a").await.unwrap();
+    let tenant_b = repo.create_tenant("tenant-b").await.unwrap();
+    let key_a = repo.create_api_key(tenant_a.id, "primary-a").await.unwrap();
+    let key_b = repo.create_api_key(tenant_b.id, "primary-b").await.unwrap();
+    repo.bind_route("test-route", tenant_a.id).await.unwrap();
+    repo.bind_route("tenant-b-route", tenant_b.id).await.unwrap();
+
+    let snapshot = repo.load_auth_snapshot().await.unwrap();
+    let tenant_cache = guard_rail_engine::tenant::cache::TenantAuthCache::default();
+    tenant_cache.replace(snapshot).await;
+
+    let upstream = start_mock_upstream(200, "ok").await;
+    let tmp = tempfile::TempDir::new().unwrap();
+    write_file(
+        tmp.path(),
+        "routes.yaml",
+        &format!(
+            r#"
+routes:
+  - id: test-route
+    path: /v1/execute/test-route
+    upstream: {upstream}/tenant-a
+    methods: [POST]
+    policies: []
+  - id: tenant-b-route
+    path: /v1/execute/tenant-b-route
+    upstream: {upstream}/tenant-b
+    methods: [POST]
+    policies: []
+"#
+        ),
+    );
+    let policies_dir = tmp.path().join("policies");
+    std::fs::create_dir_all(&policies_dir).unwrap();
+    write_file(&policies_dir, "policy.yaml", "policies: []\n");
+
+    let routes = guard_rail_engine::routes::RouteTable::load(&tmp.path().join("routes.yaml")).unwrap();
+    let policies = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
+    let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
+        pool.clone(),
+        std::time::Duration::from_millis(250),
+    );
+
+    let state = guard_rail_engine::proxy::AppState {
+        routes: std::sync::Arc::new(tokio::sync::RwLock::new(routes)),
+        policies: std::sync::Arc::new(tokio::sync::RwLock::new(policies)),
+        http_client: reqwest::Client::new(),
+        audit_store: Some(store.clone()),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: "stage2-admin-token".to_string(),
+        tenant_repo: repo.clone(),
+        tenant_cache: tenant_cache.clone(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(
+            requests_per_minute,
+            burst,
+        ),
+    };
+
+    let app = guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    Stage3TestApp {
+        base_url: format!("http://{}", addr),
+        store,
+        tenant_a_id: tenant_a.id,
+        tenant_a_key_id: key_a.id,
+        tenant_a_key: key_a.raw_key,
+        tenant_b_id: tenant_b.id,
+        tenant_b_key: key_b.raw_key,
+    }
+}
+
+#[tokio::test]
+async fn test_missing_api_key_returns_401_and_audits_event() {
+    let harness = start_stage3_test_app(120, 30).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let rows = harness.store.list_executions(
+        guard_rail_engine::audit::api::AuditListQuery {
+            tenant_id: None,
+            route_id: None,
+            verdict: None,
+            from: None,
+            to: None,
+            limit: None,
+            cursor: None,
+            order: None,
+        },
+        guard_rail_engine::auth::context::AuditAccess::Admin,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.items[0].auth_outcome.as_deref(), Some("missing_api_key"));
+}
+
+#[tokio::test]
+async fn test_valid_key_for_other_tenant_route_returns_404() {
+    let harness = start_stage3_test_app(120, 30).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/execute/tenant-b-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
+}
+
+#[tokio::test]
+async fn test_tenant_rate_limit_returns_429_without_blocking_other_tenant() {
+    let harness = start_stage3_test_app(1, 1).await;
+
+    let first = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+    let second = reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+    let other = reqwest::Client::new()
+        .post(format!("{}/v1/execute/tenant-b-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_b_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(first.status(), 200);
+    assert_eq!(second.status(), 429);
+    assert_eq!(other.status(), 200);
+}

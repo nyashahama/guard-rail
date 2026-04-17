@@ -11,6 +11,7 @@ use crate::storage::postgres::ExecutionAuditRow;
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct AuditListQuery {
+    pub tenant_id: Option<uuid::Uuid>,
     pub route_id: Option<String>,
     pub verdict: Option<String>,
     pub from: Option<DateTime<Utc>>,
@@ -50,7 +51,7 @@ pub async fn list_executions(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let page = store
-        .list_executions(query)
+        .list_executions(query, crate::auth::context::AuditAccess::Admin)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(page))

@@ -2,6 +2,7 @@ pub mod forward;
 pub mod response;
 
 use crate::audit::hash::{hash_body, hash_string};
+use crate::auth::context::{authenticate_tenant_request, RequestAuthContext, RequestAuthFailure};
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
 use crate::policy::PolicySet;
@@ -27,9 +28,10 @@ pub struct AppState {
     pub audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
     pub route_config_hash: String,
     pub policy_set_hash: String,
-    pub admin_token: Option<String>,
-    pub tenant_repo: Option<crate::tenant::repository::TenantRepository>,
-    pub tenant_cache: Option<crate::tenant::cache::TenantAuthCache>,
+    pub admin_token: String,
+    pub tenant_repo: crate::tenant::repository::TenantRepository,
+    pub tenant_cache: crate::tenant::cache::TenantAuthCache,
+    pub rate_limiter: crate::auth::rate_limit::TenantRateLimiter,
 }
 
 impl std::fmt::Debug for AppState {
@@ -63,9 +65,15 @@ fn spawn_emit_and_persist(
     record: ExecutionRecord,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
 ) {
-    tokio::spawn(async move {
-        emit_and_persist(record, audit_store).await;
-    });
+    let log = ExecutionLog::from(&record);
+    log.emit();
+    if let Some(store) = audit_store {
+        tokio::spawn(async move {
+            if let Err(e) = store.insert_execution(&record).await {
+                eprintln!("Failed to persist execution: {}", e);
+            }
+        });
+    }
 }
 
 pub async fn handle_execute(
@@ -103,13 +111,101 @@ pub async fn handle_execute(
     };
     drop(routes);
 
-    // 2. Method check
+    // 2. Tenant authentication
+    let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
+    let (tenant_id, api_key_id, auth_outcome) = match auth_result {
+        Ok(RequestAuthContext::Tenant { tenant_id, api_key_id, .. }) => {
+            let snapshot = state.tenant_cache.snapshot().await;
+            let bound_tenant_id = snapshot.route_bindings.get(&route_id);
+            if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
+                return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
+            }
+            if !state.rate_limiter.allow(tenant_id).await {
+                let record = ExecutionRecord {
+                    execution_id: execution_id.clone(),
+                    execution_started_at,
+                    route_id: route_id.clone(),
+                    tenant_id: Some(tenant_id),
+                    api_key_id: Some(api_key_id),
+                    auth_outcome: Some("rate_limited".to_string()),
+                    upstream_url: Some(route.upstream.clone()),
+                    method: method.to_string(),
+                    source_ip: source_ip.clone(),
+                    content_type,
+                    user_agent,
+                    had_authorization_header,
+                    request_size_bytes,
+                    request_body_sha256,
+                    verdict: ExecutionVerdict::Rejected,
+                    rejection_reason: Some("rate_limit_exceeded".to_string()),
+                    matched_policy_name: None,
+                    matched_rule_field: None,
+                    matched_rule_condition: None,
+                    matched_rule_severity: None,
+                    violation_value_hash: None,
+                    violation_value_preview: None,
+                    upstream_status: None,
+                    forward_error: None,
+                    latency_inspect_us: 0,
+                    latency_forward_ms: None,
+                    latency_total_ms: total_start.elapsed().as_millis(),
+                    route_config_hash: state.route_config_hash.clone(),
+                    policy_set_hash: state.policy_set_hash.clone(),
+                };
+                spawn_emit_and_persist(record, state.audit_store.clone());
+                return (axum::http::StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
+            }
+            (Some(tenant_id), Some(api_key_id), None)
+        }
+        Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
+        Err(auth_failure) => {
+            let auth_outcome_str = auth_failure.as_str().to_string();
+            let record = ExecutionRecord {
+                execution_id: execution_id.clone(),
+                execution_started_at,
+                route_id: route_id.clone(),
+                tenant_id: None,
+                api_key_id: None,
+                auth_outcome: Some(auth_outcome_str.clone()),
+                upstream_url: Some(route.upstream.clone()),
+                method: method.to_string(),
+                source_ip: source_ip.clone(),
+                content_type,
+                user_agent,
+                had_authorization_header,
+                request_size_bytes,
+                request_body_sha256,
+                verdict: ExecutionVerdict::Rejected,
+                rejection_reason: Some(auth_outcome_str),
+                matched_policy_name: None,
+                matched_rule_field: None,
+                matched_rule_condition: None,
+                matched_rule_severity: None,
+                violation_value_hash: None,
+                violation_value_preview: None,
+                upstream_status: None,
+                forward_error: None,
+                latency_inspect_us: 0,
+                latency_forward_ms: None,
+                latency_total_ms: total_start.elapsed().as_millis(),
+                route_config_hash: state.route_config_hash.clone(),
+                policy_set_hash: state.policy_set_hash.clone(),
+            };
+            spawn_emit_and_persist(record, state.audit_store.clone());
+            return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        }
+    };
+
+    // 3. Method check
     let method_str = method.to_string();
     if !route.methods.contains(&method_str) {
         let record = ExecutionRecord {
             execution_id: execution_id.clone(),
             execution_started_at,
             route_id: route_id.clone(),
+            tenant_id,
+            api_key_id,
+            auth_outcome,
             upstream_url: Some(route.upstream.clone()),
             method: method_str.clone(),
             source_ip: source_ip.clone(),
@@ -146,6 +242,9 @@ pub async fn handle_execute(
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
+tenant_id,
+            api_key_id,
+            auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -198,6 +297,9 @@ pub async fn handle_execute(
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
+tenant_id,
+            api_key_id,
+            auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -247,6 +349,9 @@ pub async fn handle_execute(
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
+                tenant_id,
+                api_key_id,
+                auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -279,6 +384,9 @@ pub async fn handle_execute(
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
+                tenant_id,
+                api_key_id,
+                auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -389,8 +497,9 @@ pub fn compute_state(
         audit_store,
         route_config_hash,
         policy_set_hash,
-        admin_token: None,
-        tenant_repo: pool.ok().map(crate::tenant::repository::TenantRepository::new),
-        tenant_cache: Some(crate::tenant::cache::TenantAuthCache::default()),
+        admin_token: String::new(),
+        tenant_repo: pool.ok().map(crate::tenant::repository::TenantRepository::new).unwrap_or_else(|| crate::tenant::repository::TenantRepository::new(sqlx::postgres::PgPoolOptions::new().max_connections(1).connect_lazy("").unwrap())),
+        tenant_cache: crate::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: crate::auth::rate_limit::TenantRateLimiter::new(120, 30),
     }
 }

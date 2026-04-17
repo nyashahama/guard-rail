@@ -176,9 +176,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_store: Some(audit_store),
         route_config_hash,
         policy_set_hash,
-        admin_token: Some(app_config.admin.token.clone()),
-        tenant_repo: Some(tenant_repo),
-        tenant_cache: Some(tenant_cache),
+        admin_token: app_config.admin.token.clone(),
+        tenant_repo,
+        tenant_cache,
+        rate_limiter: crate::auth::rate_limit::TenantRateLimiter::new(120, 30),
     };
 
     let app = proxy::build_router(
