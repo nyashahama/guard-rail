@@ -6,6 +6,7 @@ mod logging;
 mod policy;
 mod proxy;
 mod reload;
+mod replay;
 mod routes;
 mod storage;
 mod tenant;
@@ -183,6 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             app_config.rate_limit.requests_per_minute,
             app_config.rate_limit.burst,
         ),
+        replay: app_config.replay.clone(),
     };
 
     let app = proxy::build_router(

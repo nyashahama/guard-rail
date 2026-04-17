@@ -322,6 +322,107 @@ impl PostgresAuditStore {
         })
     }
 
+    pub async fn insert_execution_bundle(
+        &self,
+        record: &crate::execution::ExecutionRecord,
+        artifacts: Option<&crate::proxy::ReplayArtifacts>,
+        snapshot: Option<&crate::replay::snapshot::PolicySnapshotRecord>,
+    ) -> Result<(), sqlx::Error> {
+        if let Some(snap) = snapshot {
+            tokio::time::timeout(
+                self.write_timeout,
+                sqlx::query(
+                    r#"
+                    insert into policy_snapshots (
+                        snapshot_hash, route_id, route_definition, policies_definition,
+                        route_config_hash, policy_set_hash
+                    ) values ($1, $2, $3, $4, $5, $6)
+                    on conflict (snapshot_hash) do nothing
+                    "#,
+                )
+                .bind(&snap.snapshot_hash)
+                .bind(&snap.route_id)
+                .bind(&snap.route_definition)
+                .bind(&snap.policies_definition)
+                .bind(&snap.route_config_hash)
+                .bind(&snap.policy_set_hash)
+                .execute(&self.pool),
+            )
+            .await
+            .map_err(|_| sqlx::Error::Protocol("snapshot insert timed out".into()))??;
+        }
+
+        if let Some(art) = artifacts {
+            tokio::time::timeout(
+                self.write_timeout,
+                sqlx::query(
+                    r#"
+                    insert into execution_artifacts (
+                        execution_id, snapshot_hash, request_body_json, request_headers,
+                        response_status, response_headers, response_body,
+                        response_body_sha256, response_body_truncated
+                    ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    on conflict (execution_id) do update set
+                        snapshot_hash = excluded.snapshot_hash,
+                        request_body_json = excluded.request_body_json,
+                        request_headers = excluded.request_headers,
+                        response_status = excluded.response_status,
+                        response_headers = excluded.response_headers,
+                        response_body = excluded.response_body,
+                        response_body_sha256 = excluded.response_body_sha256,
+                        response_body_truncated = excluded.response_body_truncated
+                    "#,
+                )
+                .bind(&record.execution_id)
+                .bind(&art.snapshot_hash)
+                .bind(&art.request_body_json)
+                .bind(&art.request_headers)
+                .bind(art.response_status.map(i32::from))
+                .bind(&art.response_headers)
+                .bind(&art.response_body)
+                .bind(&art.response_body_sha256)
+                .bind(art.response_body_truncated)
+                .execute(&self.pool),
+            )
+            .await
+            .map_err(|_| sqlx::Error::Protocol("artifact insert timed out".into()))??;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_execution_artifacts(
+        &self,
+        execution_id: &str,
+    ) -> Result<Option<ExecutionArtifactRow>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            select
+                execution_id, snapshot_hash, request_body_json, request_headers,
+                response_status, response_headers, response_body,
+                response_body_sha256, response_body_truncated, created_at
+            from execution_artifacts
+            where execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| ExecutionArtifactRow {
+            execution_id: r.get("execution_id"),
+            snapshot_hash: r.get("snapshot_hash"),
+            request_body_json: r.get("request_body_json"),
+            request_headers: r.get("request_headers"),
+            response_status: r.get::<Option<i32>, _>("response_status").map(|v| v as u16),
+            response_headers: r.get("response_headers"),
+            response_body: r.get("response_body"),
+            response_body_sha256: r.get("response_body_sha256"),
+            response_body_truncated: r.get("response_body_truncated"),
+            created_at: r.get("created_at"),
+        }))
+    }
+
     pub async fn verify_integrity(
         &self,
         query: crate::audit::api::IntegrityQuery,
@@ -405,4 +506,18 @@ pub struct ExecutionAuditRow {
     pub policy_set_hash: String,
     pub previous_hash: Option<String>,
     pub record_hash: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExecutionArtifactRow {
+    pub execution_id: String,
+    pub snapshot_hash: String,
+    pub request_body_json: serde_json::Value,
+    pub request_headers: serde_json::Value,
+    pub response_status: Option<u16>,
+    pub response_headers: Option<serde_json::Value>,
+    pub response_body: Option<String>,
+    pub response_body_sha256: Option<String>,
+    pub response_body_truncated: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -7,7 +7,7 @@ pub struct RoutesConfig {
     pub routes: Vec<Route>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Route {
     pub id: String,
     #[allow(dead_code)]

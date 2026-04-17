@@ -1,7 +1,7 @@
 pub mod conditions;
 pub mod engine;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -10,7 +10,7 @@ pub struct PoliciesFile {
     pub policies: Vec<Policy>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Policy {
     pub name: String,
     #[serde(default)]
@@ -19,7 +19,7 @@ pub struct Policy {
     pub rules: Vec<Rule>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Rule {
     pub field: String,
     pub condition: String,
@@ -101,6 +101,26 @@ impl PolicySet {
             }
         }
         Ok(())
+    }
+
+    pub fn from_policies(policies: Vec<Policy>) -> Self {
+        let by_name = policies
+            .into_iter()
+            .map(|policy| (policy.name.clone(), policy))
+            .collect();
+        Self { by_name }
+    }
+
+    pub fn policies_for_route(&self, route: &crate::routes::Route) -> Result<Vec<Policy>, String> {
+        route
+            .policies
+            .iter()
+            .map(|name| {
+                self.get(name)
+                    .cloned()
+                    .ok_or_else(|| format!("missing referenced policy: {name}"))
+            })
+            .collect()
     }
 }
 
