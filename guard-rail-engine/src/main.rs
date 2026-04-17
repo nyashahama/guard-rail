@@ -8,6 +8,7 @@ mod proxy;
 mod reload;
 mod routes;
 mod storage;
+mod tenant;
 
 use audit::hash::hash_string;
 use clap::Parser;
@@ -16,6 +17,8 @@ use reqwest::Client;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tenant::cache::{TenantAuthCache, validate_all_routes_bound};
+use tenant::repository::TenantRepository;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing_subscriber::EnvFilter;
@@ -101,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Loading routes from {}", app_config.routes_file);
     let route_table = routes::RouteTable::load(&PathBuf::from(&app_config.routes_file))?;
+    let route_table_for_cache = route_table.clone();
 
     tracing::info!("Loading policies from {}", app_config.policies_dir);
     let policy_set = policy::PolicySet::load_dir(&PathBuf::from(&app_config.policies_dir))?;
@@ -158,6 +162,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hash_string("")
     };
 
+    let tenant_repo = TenantRepository::new(pool.clone());
+    let tenant_cache = TenantAuthCache::default();
+    let auth_snapshot = tenant_repo.load_auth_snapshot().await?;
+    validate_all_routes_bound(&route_table_for_cache, &auth_snapshot)
+        .map_err(|err| format!("Tenant binding validation failed: {err}"))?;
+    tenant_cache.replace(auth_snapshot).await;
+
     let state = AppState {
         routes,
         policies,
@@ -165,6 +176,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_store: Some(audit_store),
         route_config_hash,
         policy_set_hash,
+        admin_token: app_config.admin.token.clone(),
+        tenant_repo,
+        tenant_cache,
+        rate_limiter: crate::auth::rate_limit::TenantRateLimiter::new(
+            app_config.rate_limit.requests_per_minute,
+            app_config.rate_limit.burst,
+        ),
     };
 
     let app = proxy::build_router(

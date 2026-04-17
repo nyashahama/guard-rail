@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub audit: AuditConfig,
     pub admin: AdminConfig,
+    pub tenant_auth: TenantAuthConfig,
+    pub rate_limit: RateLimitConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -84,6 +86,32 @@ pub struct AdminConfig {
     pub token: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TenantAuthConfig {
+    #[serde(default = "default_authorization_header")]
+    pub header_name: String,
+}
+
+fn default_authorization_header() -> String {
+    "authorization".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_requests_per_minute")]
+    pub requests_per_minute: u32,
+    #[serde(default = "default_burst")]
+    pub burst: u32,
+}
+
+fn default_requests_per_minute() -> u32 {
+    120
+}
+
+fn default_burst() -> u32 {
+    30
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
@@ -111,6 +139,15 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_ADMIN__TOKEN") {
             config.admin.token = val;
         }
+        if let Ok(val) = std::env::var("GUARDRAIL_TENANT_AUTH__HEADER_NAME") {
+            config.tenant_auth.header_name = val;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE") {
+            config.rate_limit.requests_per_minute = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_RATE_LIMIT__BURST") {
+            config.rate_limit.burst = val.parse()?;
+        }
 
         Ok(config)
     }
@@ -121,8 +158,24 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn clear_env_vars() {
+        unsafe {
+            std::env::remove_var("GUARDRAIL_SERVER__HOST");
+            std::env::remove_var("GUARDRAIL_SERVER__PORT");
+            std::env::remove_var("GUARDRAIL_LOGGING__LEVEL");
+            std::env::remove_var("GUARDRAIL_DATABASE__URL");
+            std::env::remove_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS");
+            std::env::remove_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS");
+            std::env::remove_var("GUARDRAIL_ADMIN__TOKEN");
+            std::env::remove_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME");
+            std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
+            std::env::remove_var("GUARDRAIL_RATE_LIMIT__BURST");
+        }
+    }
+
     #[test]
     fn test_load_valid_config() {
+        clear_env_vars();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -143,6 +196,11 @@ audit:
   write_timeout_ms: 100
 admin:
   token: "test-token"
+tenant_auth:
+  header_name: "authorization"
+rate_limit:
+  requests_per_minute: 120
+  burst: 30
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(yaml.as_bytes()).unwrap();
@@ -157,6 +215,7 @@ admin:
 
     #[test]
     fn test_load_config_with_defaults() {
+        clear_env_vars();
         let yaml = r#"
 server:
   host: "0.0.0.0"
@@ -170,6 +229,8 @@ database:
 audit: {}
 admin:
   token: "default-admin"
+tenant_auth: {}
+rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(yaml.as_bytes()).unwrap();
@@ -194,7 +255,39 @@ admin:
     }
 
     #[test]
+    fn test_load_config_with_stage3_sections() {
+        clear_env_vars();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage2-admin-token"
+tenant_auth:
+  header_name: "authorization"
+rate_limit:
+  requests_per_minute: 120
+  burst: 30
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.tenant_auth.header_name, "authorization");
+        assert_eq!(config.rate_limit.requests_per_minute, 120);
+        assert_eq!(config.rate_limit.burst, 30);
+    }
+
+    #[test]
     fn test_load_config_with_stage2_sections() {
+        clear_env_vars();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -210,6 +303,11 @@ audit:
   write_timeout_ms: 250
 admin:
   token: "stage2-admin-token"
+tenant_auth:
+  header_name: "authorization"
+rate_limit:
+  requests_per_minute: 120
+  burst: 30
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(yaml.as_bytes()).unwrap();
@@ -226,6 +324,7 @@ admin:
 
     #[test]
     fn test_stage2_env_overrides() {
+        clear_env_vars();
         let yaml = r#"
 server:
   host: "0.0.0.0"
@@ -239,6 +338,8 @@ database:
 audit: {}
 admin:
   token: "from-config"
+tenant_auth: {}
+rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(yaml.as_bytes()).unwrap();
@@ -252,6 +353,9 @@ admin:
                     std::env::remove_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS");
                     std::env::remove_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS");
                     std::env::remove_var("GUARDRAIL_ADMIN__TOKEN");
+                    std::env::remove_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME");
+                    std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
+                    std::env::remove_var("GUARDRAIL_RATE_LIMIT__BURST");
                 }
             }
         }
@@ -266,6 +370,9 @@ admin:
             std::env::set_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS", "20");
             std::env::set_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS", "400");
             std::env::set_var("GUARDRAIL_ADMIN__TOKEN", "from-env");
+            std::env::set_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME", "x-custom-auth");
+            std::env::set_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE", "200");
+            std::env::set_var("GUARDRAIL_RATE_LIMIT__BURST", "50");
         }
 
         let config = AppConfig::load(tmp.path()).unwrap();
@@ -276,5 +383,8 @@ admin:
         assert_eq!(config.database.max_connections, 20);
         assert_eq!(config.audit.write_timeout_ms, 400);
         assert_eq!(config.admin.token, "from-env");
+        assert_eq!(config.tenant_auth.header_name, "x-custom-auth");
+        assert_eq!(config.rate_limit.requests_per_minute, 200);
+        assert_eq!(config.rate_limit.burst, 50);
     }
 }

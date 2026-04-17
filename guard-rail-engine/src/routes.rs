@@ -25,7 +25,7 @@ fn default_timeout() -> u64 {
 
 #[derive(Debug, Clone)]
 pub struct RouteTable {
-    by_id: HashMap<String, Route>,
+    by_id: std::collections::HashMap<String, Route>,
 }
 
 impl RouteTable {
@@ -57,6 +57,21 @@ impl RouteTable {
         names.sort();
         names.dedup();
         names
+    }
+
+    #[allow(dead_code)]
+    pub fn from_routes(routes: Vec<Route>) -> Self {
+        let by_id = routes
+            .into_iter()
+            .map(|route| (route.id.clone(), route))
+            .collect();
+        Self { by_id }
+    }
+
+    pub fn route_ids(&self) -> Vec<String> {
+        let mut ids = self.by_id.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        ids
     }
 }
 
@@ -179,5 +194,21 @@ routes:
         let route = table.lookup("test").unwrap();
         assert!(route.methods.contains(&"POST".to_string()));
         assert!(!route.methods.contains(&"GET".to_string()));
+    }
+
+    #[test]
+    fn test_validate_all_routes_bound_returns_error_for_unbound_route() {
+        let routes = RouteTable::from_routes(vec![Route {
+            id: "test-route".to_string(),
+            path: "/v1/execute/test-route".to_string(),
+            upstream: "http://upstream".to_string(),
+            methods: vec!["POST".to_string()],
+            policies: vec![],
+            timeout_ms: 5000,
+        }]);
+
+        let snapshot = crate::tenant::cache::TenantAuthSnapshot::default();
+        let err = crate::tenant::cache::validate_all_routes_bound(&routes, &snapshot).unwrap_err();
+        assert!(err.contains("test-route"));
     }
 }

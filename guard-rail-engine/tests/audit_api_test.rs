@@ -1,5 +1,8 @@
+use guard_rail_engine::auth::rate_limit::TenantRateLimiter;
 use guard_rail_engine::execution::{ExecutionRecord, ExecutionVerdict};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
+use guard_rail_engine::tenant::cache::TenantAuthCache;
+use guard_rail_engine::tenant::repository::TenantRepository;
 use tower::util::ServiceExt;
 
 async fn start_mock_upstream(status: u16, body: &'static str) -> String {
@@ -96,6 +99,15 @@ policies:
         policy_set_hash: guard_rail_engine::audit::hash::hash_string(
             &std::fs::read_to_string(policies_dir.join("policy.yaml")).unwrap_or_default(),
         ),
+        admin_token: "stage2-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy("postgres://localhost:5432/test")
+                .unwrap(),
+        ),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
     };
 
     let app = axum::Router::new()
@@ -137,6 +149,10 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         std::time::Duration::from_millis(250),
     );
 
+    let dummy_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy("postgres://localhost:5432/test")
+        .unwrap();
     let state = guard_rail_engine::proxy::AppState {
         routes: std::sync::Arc::new(tokio::sync::RwLock::new(
             guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
@@ -154,6 +170,12 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         audit_store: Some(audit_store),
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: "stage2-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
+            dummy_pool.clone(),
+        ),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
     };
 
     guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
@@ -177,6 +199,9 @@ async fn build_test_router_with_seeded_audit_rows() -> axum::Router {
             execution_id: execution_id.to_string(),
             execution_started_at: chrono::Utc::now(),
             route_id: "test-route".to_string(),
+            tenant_id: None,
+            api_key_id: None,
+            auth_outcome: None,
             upstream_url: Some("http://upstream.test/api".to_string()),
             method: "POST".to_string(),
             source_ip: "127.0.0.1".to_string(),
@@ -282,6 +307,9 @@ async fn test_insert_execution_and_fetch_it_back() {
             execution_id: "GR-EXE-blocked-1".to_string(),
             execution_started_at: chrono::Utc::now(),
             route_id: "test-route".to_string(),
+            tenant_id: None,
+            api_key_id: None,
+            auth_outcome: None,
             upstream_url: Some("http://upstream.test/api".to_string()),
             method: "POST".to_string(),
             source_ip: "127.0.0.1".to_string(),
@@ -333,6 +361,33 @@ async fn test_insert_execution_and_fetch_it_back() {
 }
 
 #[tokio::test]
+async fn test_stage3_migration_creates_tenant_tables() {
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        r#"
+        select table_name
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('tenants', 'api_keys', 'tenant_routes')
+        order by table_name
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(tables, vec!["api_keys", "tenant_routes", "tenants"]);
+}
+
+#[tokio::test]
 async fn test_audit_list_returns_newest_first() {
     let app = build_test_router_with_seeded_audit_rows().await;
 
@@ -351,4 +406,216 @@ async fn test_audit_list_returns_newest_first() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["items"][0]["execution_id"], "GR-EXE-3");
     assert_eq!(json["items"][1]["execution_id"], "GR-EXE-2");
+}
+
+async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3TestHarness {
+    use guard_rail_engine::auth::rate_limit::TenantRateLimiter;
+    use guard_rail_engine::storage::postgres::PostgresAuditStore;
+    use guard_rail_engine::tenant::cache::TenantAuthCache;
+    use guard_rail_engine::tenant::repository::TenantRepository;
+
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::query(
+        "truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let repo = TenantRepository::new(pool.clone());
+    let tenant_a = repo.create_tenant("tenant-a").await.unwrap();
+    let tenant_b = repo.create_tenant("tenant-b").await.unwrap();
+    let key_a = repo.create_api_key(tenant_a.id, "primary-a").await.unwrap();
+    let key_b = repo.create_api_key(tenant_b.id, "primary-b").await.unwrap();
+    repo.bind_route("test-route", tenant_a.id).await.unwrap();
+    repo.bind_route("tenant-b-route", tenant_b.id)
+        .await
+        .unwrap();
+
+    let snapshot = repo.load_auth_snapshot().await.unwrap();
+    let tenant_cache = TenantAuthCache::default();
+    tenant_cache.replace(snapshot).await;
+
+    let app = axum::Router::new().route(
+        "/{*path}",
+        axum::routing::any(|| async move { (axum::http::StatusCode::OK, "ok") }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let upstream = format!("http://{}", addr);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    write_file(
+        tmp.path(),
+        "routes.yaml",
+        &format!(
+            r#"
+routes:
+  - id: test-route
+    path: /v1/execute/test-route
+    upstream: {upstream}/tenant-a
+    methods: [POST]
+    policies: []
+  - id: tenant-b-route
+    path: /v1/execute/tenant-b-route
+    upstream: {upstream}/tenant-b
+    methods: [POST]
+    policies: []
+"#
+        ),
+    );
+    let policies_dir = tmp.path().join("policies");
+    std::fs::create_dir_all(&policies_dir).unwrap();
+    write_file(&policies_dir, "policy.yaml", "policies: []\n");
+
+    let routes =
+        guard_rail_engine::routes::RouteTable::load(&tmp.path().join("routes.yaml")).unwrap();
+    let policies = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
+    let store = PostgresAuditStore::new(pool, std::time::Duration::from_millis(250));
+
+    let state = guard_rail_engine::proxy::AppState {
+        routes: std::sync::Arc::new(tokio::sync::RwLock::new(routes)),
+        policies: std::sync::Arc::new(tokio::sync::RwLock::new(policies)),
+        http_client: reqwest::Client::new(),
+        audit_store: Some(store),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: "stage2-admin-token".to_string(),
+        tenant_repo: repo,
+        tenant_cache: tenant_cache,
+        rate_limiter: TenantRateLimiter::new(requests_per_minute, burst),
+    };
+
+    let app =
+        guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    Stage3TestHarness {
+        base_url: format!("http://{}", addr),
+        tenant_a_id: tenant_a.id,
+        tenant_a_key: key_a.raw_key,
+        tenant_b_id: tenant_b.id,
+        tenant_b_key: key_b.raw_key,
+    }
+}
+
+struct Stage3TestHarness {
+    base_url: String,
+    tenant_a_id: uuid::Uuid,
+    tenant_a_key: String,
+    tenant_b_id: uuid::Uuid,
+    tenant_b_key: String,
+}
+
+#[tokio::test]
+async fn test_tenant_audit_list_returns_only_owned_rows() {
+    struct AuditListView {
+        items: serde_json::Value,
+    }
+
+    impl AuditListView {
+        fn contains_auth_outcome(&self, needle: &str) -> bool {
+            self.items
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["auth_outcome"] == needle)
+        }
+    }
+
+    let harness = start_stage3_test_app(120, 30).await;
+
+    reqwest::Client::new()
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+    reqwest::Client::new()
+        .post(format!("{}/v1/execute/tenant-b-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_b_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{}/v1/audit/executions", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let json: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json["items"][0]["tenant_id"].as_str().unwrap(),
+        harness.tenant_a_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn test_tenant_audit_detail_for_other_tenant_returns_404() {
+    let harness = start_stage3_test_app(120, 30).await;
+
+    reqwest::Client::new()
+        .post(format!("{}/v1/execute/tenant-b-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_b_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let admin_list: serde_json::Value = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/audit/executions?tenant_id={}",
+            harness.base_url, harness.tenant_b_id
+        ))
+        .header("authorization", "Bearer stage2-admin-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tenant_b_execution_id = admin_list["items"][0]["execution_id"].as_str().unwrap();
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/v1/audit/executions/{}",
+            harness.base_url, tenant_b_execution_id
+        ))
+        .header("authorization", format!("Bearer {}", harness.tenant_a_key))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 404);
 }

@@ -8,3 +8,4 @@ pub mod proxy;
 pub mod reload;
 pub mod routes;
 pub mod storage;
+pub mod tenant;

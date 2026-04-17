@@ -23,3 +23,10 @@ audit:
 
 admin:
   token: "change-me"
+
+tenant_auth:
+  header_name: "authorization"
+
+rate_limit:
+  requests_per_minute: 120
+  burst: 30
