@@ -1,0 +1,15 @@
+[Unit]
+Description=Guard Rail Engine
+After=network.target
+
+[Service]
+WorkingDirectory=/srv/guard-rail-engine
+EnvironmentFile=-/etc/guard-rail-engine.env
+ExecStart=/usr/local/bin/guard-rail-engine serve --config /srv/guard-rail-engine/config/config.yaml
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

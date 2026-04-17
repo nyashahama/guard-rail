@@ -7,10 +7,12 @@ use crate::auth::rate_limit::TenantRateLimiter;
 use crate::config::ReplayConfig;
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
+use crate::observability::metrics::Metrics;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
 use crate::replay::snapshot;
 use crate::routes::RouteTable;
+use crate::shutdown::LifecycleState;
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
 use axum::Json;
@@ -44,6 +46,10 @@ pub struct AppState {
     pub policies: Arc<RwLock<PolicySet>>,
     pub http_client: Client,
     pub audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    pub metrics: Option<Arc<Metrics>>,
+    pub lifecycle: LifecycleState,
+    pub readiness_probe_timeout_ms: u64,
+    pub trace_header_name: String,
     pub route_config_hash: String,
     pub policy_set_hash: String,
     pub admin_token: String,
@@ -63,6 +69,7 @@ impl std::fmt::Debug for AppState {
             .field("policies", &"<RwLock<PolicySet>>")
             .field("http_client", &"<Client>")
             .field("audit_store", &self.audit_store.is_some())
+            .field("metrics", &self.metrics.is_some())
             .field("route_config_hash", &self.route_config_hash)
             .field("policy_set_hash", &self.policy_set_hash)
             .finish()
@@ -73,6 +80,7 @@ impl std::fmt::Debug for AppState {
 async fn emit_and_persist(
     record: ExecutionRecord,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    _metrics: Option<Arc<Metrics>>,
 ) {
     ExecutionLog::from(&record).emit();
     if let Some(store) = audit_store {
@@ -87,13 +95,17 @@ async fn emit_and_persist(
 fn spawn_emit_and_persist(
     record: ExecutionRecord,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
 ) {
     let log = ExecutionLog::from(&record);
     log.emit();
     if let Some(store) = audit_store {
         tokio::spawn(async move {
             if let Err(e) = store.insert_execution(&record).await {
-                eprintln!("Failed to persist execution: {}", e);
+                tracing::error!(error = %e, execution_id = %record.execution_id, "failed to persist execution");
+                if let Some(metrics) = metrics {
+                    metrics.record_audit_persist_failure("insert_execution");
+                }
             }
         });
     }
@@ -104,6 +116,7 @@ fn spawn_emit_and_persist_bundle(
     artifacts: Option<ReplayArtifacts>,
     snapshot: Option<snapshot::PolicySnapshotRecord>,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
 ) {
     let log = ExecutionLog::from(&record);
     log.emit();
@@ -113,9 +126,25 @@ fn spawn_emit_and_persist_bundle(
                 .insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref())
                 .await
             {
-                eprintln!("Failed to persist execution bundle: {}", e);
+                tracing::error!(error = %e, execution_id = %record.execution_id, "failed to persist execution bundle");
+                if let Some(metrics) = metrics {
+                    metrics.record_audit_persist_failure("insert_execution_bundle");
+                    metrics.record_replay_persist_failure("insert_execution_bundle");
+                }
             }
         });
+    }
+}
+
+fn record_execution_metric(
+    metrics: Option<&Arc<Metrics>>,
+    route_id: &str,
+    method: &str,
+    verdict: &str,
+    latency_seconds: f64,
+) {
+    if let Some(metrics) = metrics {
+        metrics.record_execution(route_id, method, verdict, latency_seconds);
     }
 }
 
@@ -128,7 +157,20 @@ pub async fn handle_execute(
     body: Bytes,
 ) -> Response {
     let total_start = Instant::now();
+    let _inflight = state
+        .metrics
+        .as_ref()
+        .map(|metrics| metrics.inflight_guard());
     let execution_id = format!("GR-EXE-{}", Uuid::new_v4());
+    let trace_id =
+        crate::observability::tracing::trace_id_from_headers(&headers, &state.trace_header_name);
+    let request_span = crate::observability::tracing::execution_span(
+        &trace_id,
+        &execution_id,
+        &route_id,
+        method.as_str(),
+    );
+    let _request_span = request_span.enter();
     let source_ip = addr.ip().to_string();
     let execution_started_at = Utc::now();
 
@@ -149,6 +191,14 @@ pub async fn handle_execute(
     let route = match routes.lookup(&route_id) {
         Some(r) => r.clone(),
         None => {
+            tracing::Span::current().record("verdict", "REJECTED");
+            record_execution_metric(
+                state.metrics.as_ref(),
+                &route_id,
+                method.as_str(),
+                "REJECTED",
+                total_start.elapsed().as_secs_f64(),
+            );
             return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
         }
     };
@@ -168,8 +218,54 @@ pub async fn handle_execute(
                 api_key_id,
                 ..
             }) => {
+                tracing::Span::current().record("tenant_id", tracing::field::display(tenant_id));
+                tracing::Span::current().record("api_key_id", tracing::field::display(api_key_id));
                 let bound_tenant_id = snapshot.route_bindings.get(&route_id);
                 if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
+                    let record = ExecutionRecord {
+                        execution_id: execution_id.clone(),
+                        execution_started_at,
+                        route_id: route_id.clone(),
+                        tenant_id: Some(tenant_id),
+                        api_key_id: Some(api_key_id),
+                        auth_outcome: Some("tenant_route_mismatch".to_string()),
+                        upstream_url: Some(route.upstream.clone()),
+                        method: method.to_string(),
+                        source_ip: source_ip.clone(),
+                        content_type: content_type.clone(),
+                        user_agent: user_agent.clone(),
+                        had_authorization_header,
+                        request_size_bytes,
+                        request_body_sha256: request_body_sha256.clone(),
+                        verdict: ExecutionVerdict::Rejected,
+                        rejection_reason: Some("tenant_route_mismatch".to_string()),
+                        matched_policy_name: None,
+                        matched_rule_field: None,
+                        matched_rule_condition: None,
+                        matched_rule_severity: None,
+                        violation_value_hash: None,
+                        violation_value_preview: None,
+                        upstream_status: None,
+                        forward_error: None,
+                        latency_inspect_us: 0,
+                        latency_forward_ms: None,
+                        latency_total_ms: total_start.elapsed().as_millis(),
+                        route_config_hash: state.route_config_hash.clone(),
+                        policy_set_hash: state.policy_set_hash.clone(),
+                    };
+                    tracing::Span::current().record("verdict", "REJECTED");
+                    record_execution_metric(
+                        state.metrics.as_ref(),
+                        &route_id,
+                        method.as_str(),
+                        "REJECTED",
+                        total_start.elapsed().as_secs_f64(),
+                    );
+                    spawn_emit_and_persist(
+                        record,
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                    );
                     return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
                 }
                 if !state.rate_limiter.allow(tenant_id).await {
@@ -204,7 +300,19 @@ pub async fn handle_execute(
                         route_config_hash: state.route_config_hash.clone(),
                         policy_set_hash: state.policy_set_hash.clone(),
                     };
-                    spawn_emit_and_persist(record, state.audit_store.clone());
+                    record_execution_metric(
+                        state.metrics.as_ref(),
+                        &route_id,
+                        method.as_str(),
+                        "REJECTED",
+                        total_start.elapsed().as_secs_f64(),
+                    );
+                    tracing::Span::current().record("verdict", "REJECTED");
+                    spawn_emit_and_persist(
+                        record,
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                    );
                     return (
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
                         "Rate limit exceeded",
@@ -247,7 +355,15 @@ pub async fn handle_execute(
                     route_config_hash: state.route_config_hash.clone(),
                     policy_set_hash: state.policy_set_hash.clone(),
                 };
-                spawn_emit_and_persist(record, state.audit_store.clone());
+                record_execution_metric(
+                    state.metrics.as_ref(),
+                    &route_id,
+                    method.as_str(),
+                    "REJECTED",
+                    total_start.elapsed().as_secs_f64(),
+                );
+                tracing::Span::current().record("verdict", "REJECTED");
+                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
                 return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
             }
         }
@@ -287,7 +403,15 @@ pub async fn handle_execute(
             route_config_hash: state.route_config_hash.clone(),
             policy_set_hash: state.policy_set_hash.clone(),
         };
-        spawn_emit_and_persist(record, state.audit_store.clone());
+        record_execution_metric(
+            state.metrics.as_ref(),
+            &route_id,
+            &method_str,
+            "REJECTED",
+            total_start.elapsed().as_secs_f64(),
+        );
+        tracing::Span::current().record("verdict", "REJECTED");
+        spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
         return response::method_not_allowed_response(&execution_id);
     }
 
@@ -326,7 +450,15 @@ pub async fn handle_execute(
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
-            spawn_emit_and_persist(record, state.audit_store.clone());
+            record_execution_metric(
+                state.metrics.as_ref(),
+                &route_id,
+                &method_str,
+                "REJECTED",
+                total_start.elapsed().as_secs_f64(),
+            );
+            tracing::Span::current().record("verdict", "REJECTED");
+            spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             return response::reject_response(&execution_id, "Invalid JSON body");
         }
     };
@@ -399,14 +531,31 @@ pub async fn handle_execute(
                     response_body_sha256: None,
                     response_body_truncated: false,
                 };
+                record_execution_metric(
+                    state.metrics.as_ref(),
+                    &route_id,
+                    &method_str,
+                    "BLOCKED",
+                    total_start.elapsed().as_secs_f64(),
+                );
+                tracing::Span::current().record("verdict", "BLOCKED");
                 spawn_emit_and_persist_bundle(
                     record,
                     Some(artifacts),
                     Some(snapshot),
                     state.audit_store.clone(),
+                    state.metrics.clone(),
                 );
             } else {
-                spawn_emit_and_persist(record, state.audit_store.clone());
+                record_execution_metric(
+                    state.metrics.as_ref(),
+                    &route_id,
+                    &method_str,
+                    "BLOCKED",
+                    total_start.elapsed().as_secs_f64(),
+                );
+                tracing::Span::current().record("verdict", "BLOCKED");
+                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             }
             return response::block_response(&execution_id, &policy_name, &rule_field, &message);
         }
@@ -471,6 +620,14 @@ pub async fn handle_execute(
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
+            record_execution_metric(
+                state.metrics.as_ref(),
+                &route_id,
+                &method_str,
+                "ALLOWED",
+                total_start.elapsed().as_secs_f64(),
+            );
+            tracing::Span::current().record("verdict", "ALLOWED");
 
             if state.replay.enabled {
                 let response_body_bytes = result.body_bytes;
@@ -506,9 +663,10 @@ pub async fn handle_execute(
                     Some(artifacts),
                     snapshot,
                     state.audit_store.clone(),
+                    state.metrics.clone(),
                 );
             } else {
-                spawn_emit_and_persist(record, state.audit_store.clone());
+                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             }
             result.response
         }
@@ -528,8 +686,8 @@ pub async fn handle_execute(
                 had_authorization_header,
                 request_size_bytes,
                 request_body_sha256,
-                verdict: ExecutionVerdict::Allowed,
-                rejection_reason: None,
+                verdict: ExecutionVerdict::Rejected,
+                rejection_reason: Some("upstream_failure".to_string()),
                 matched_policy_name: None,
                 matched_rule_field: None,
                 matched_rule_condition: None,
@@ -544,9 +702,75 @@ pub async fn handle_execute(
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
-            spawn_emit_and_persist(record, state.audit_store.clone());
+            record_execution_metric(
+                state.metrics.as_ref(),
+                &route_id,
+                &method_str,
+                "UPSTREAM_FAILURE",
+                total_start.elapsed().as_secs_f64(),
+            );
+            tracing::Span::current().record("verdict", "UPSTREAM_FAILURE");
+            if let Some(metrics) = &state.metrics {
+                metrics.record_upstream_failure(&route_id);
+            }
+            spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             response::bad_gateway_response(&execution_id, &e)
         }
+    }
+}
+
+async fn ready_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let lifecycle_ready = state.lifecycle.is_ready().await;
+    let db_ready = match &state.audit_store {
+        Some(store) => {
+            let probe = tokio::time::timeout(
+                std::time::Duration::from_millis(state.readiness_probe_timeout_ms),
+                store.readiness_check(),
+            )
+            .await;
+            matches!(probe, Ok(Ok(())))
+        }
+        None => true,
+    };
+
+    let ready = lifecycle_ready && db_ready;
+    if let Some(metrics) = &state.metrics {
+        metrics.set_readiness(ready);
+    }
+
+    if ready {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    match state.metrics.as_ref() {
+        Some(metrics) => match metrics.render() {
+            Ok(snapshot) => (
+                axum::http::StatusCode::OK,
+                [(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                snapshot,
+            )
+                .into_response(),
+            Err(err) => {
+                tracing::error!(error = %err, "failed to render metrics");
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "metrics unavailable",
+                )
+                    .into_response()
+            }
+        },
+        None => (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "metrics unavailable",
+        )
+            .into_response(),
     }
 }
 
@@ -554,6 +778,7 @@ pub fn build_router(
     state: AppState,
     admin_token: String,
     request_body_limit_bytes: usize,
+    observability: &crate::config::ObservabilityConfig,
 ) -> axum::Router {
     let audit_routes = axum::Router::new()
         .route(
@@ -650,9 +875,10 @@ pub fn build_router(
             crate::auth::middleware::require_audit_access,
         ));
 
-    let main_router = axum::Router::new()
+    let mut main_router = axum::Router::new()
         .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
         .route("/health", axum::routing::get(|| async { "ok" }))
+        .route("/ready", axum::routing::get(ready_handler))
         .merge(audit_routes)
         .merge(audit_admin_routes)
         .merge(admin_routes)
@@ -660,6 +886,13 @@ pub fn build_router(
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             request_body_limit_bytes,
         ));
+
+    if observability.metrics_enabled {
+        main_router = main_router.route(
+            &observability.metrics_path,
+            axum::routing::get(metrics_handler),
+        );
+    }
 
     main_router.with_state(state)
 }
@@ -676,6 +909,10 @@ impl AppState {
             policies: Arc::new(RwLock::new(PolicySet::new())),
             http_client: Client::new(),
             audit_store: None,
+            metrics: None,
+            lifecycle: LifecycleState::new(),
+            readiness_probe_timeout_ms: 250,
+            trace_header_name: "traceparent".to_string(),
             route_config_hash: String::new(),
             policy_set_hash: String::new(),
             admin_token: String::new(),
@@ -744,6 +981,10 @@ pub fn compute_state(
         policies: Arc::new(RwLock::new(policy_set)),
         http_client,
         audit_store,
+        metrics: None,
+        lifecycle: LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash,
         policy_set_hash,
         admin_token: String::new(),

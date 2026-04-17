@@ -3,11 +3,13 @@ mod auth;
 mod config;
 mod execution;
 mod logging;
+mod observability;
 mod policy;
 mod proxy;
 mod reload;
 mod replay;
 mod routes;
+mod shutdown;
 mod storage;
 mod tenant;
 
@@ -22,7 +24,6 @@ use tenant::cache::{TenantAuthCache, validate_all_routes_bound};
 use tenant::repository::TenantRepository;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, clap::Subcommand, Default)]
 enum Command {
@@ -58,23 +59,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::Serve => {}
     }
 
+    observability::tracing::init(&app_config.logging, &app_config.observability)
+        .map_err(|err| -> Box<dyn std::error::Error> { err })?;
+
     let pool = storage::postgres::connect_pool(&app_config.database).await?;
     storage::postgres::assert_schema_ready(&pool).await?;
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&app_config.logging.level));
-
-    if app_config.logging.format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .pretty()
-            .init();
-    }
 
     tracing::info!("Loading routes from {}", app_config.routes_file);
     let route_table = routes::RouteTable::load(&PathBuf::from(&app_config.routes_file))?;
@@ -108,6 +97,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pool.clone(),
         std::time::Duration::from_millis(250),
     );
+    let metrics = if app_config.observability.metrics_enabled {
+        match observability::metrics::Metrics::new() {
+            Ok(metrics) => Some(Arc::new(metrics)),
+            Err(err) => {
+                tracing::error!(error = %err, "failed to initialize metrics");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let lifecycle = shutdown::LifecycleState::new();
 
     let route_config_path = PathBuf::from(&app_config.routes_file);
     let policies_dir_path = PathBuf::from(&app_config.policies_dir);
@@ -148,6 +149,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         policies,
         http_client,
         audit_store: Some(audit_store),
+        metrics: metrics.clone(),
+        lifecycle: lifecycle.clone(),
+        readiness_probe_timeout_ms: app_config.observability.readiness_probe_timeout_ms,
+        trace_header_name: app_config.observability.trace_header_name.clone(),
         route_config_hash,
         policy_set_hash,
         admin_token: app_config.admin.token.clone(),
@@ -164,6 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state,
         app_config.admin.token.clone(),
         app_config.server.request_body_limit_bytes,
+        &app_config.observability,
     );
 
     let addr: SocketAddr =
@@ -172,11 +178,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Guard Rail Engine starting on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(
+    lifecycle.mark_ready().await;
+    if let Some(metrics) = &metrics {
+        metrics.set_readiness(true);
+        metrics.record_shutdown_transition("ready");
+    }
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .with_graceful_shutdown(shutdown::shutdown_signal(
+        lifecycle.clone(),
+        metrics.clone(),
+    ));
+
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(app_config.shutdown.grace_period_ms),
+        server,
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
+        Err(_) => {
+            let inflight_requests = metrics
+                .as_ref()
+                .map(|metrics| metrics.inflight_requests())
+                .unwrap_or(0);
+            tracing::warn!(inflight_requests, "grace period expired while draining");
+        }
+    }
+
+    lifecycle.mark_stopped().await;
+    if let Some(metrics) = &metrics {
+        metrics.set_readiness(false);
+        metrics.record_shutdown_transition("stopped");
+    }
 
     Ok(())
 }

@@ -44,6 +44,13 @@ impl PostgresAuditStore {
         }
     }
 
+    pub async fn readiness_check(&self) -> Result<(), sqlx::Error> {
+        sqlx::query_scalar::<_, i32>("select 1")
+            .fetch_one(&self.pool)
+            .await
+            .map(|_| ())
+    }
+
     pub async fn insert_execution(
         &self,
         record: &crate::execution::ExecutionRecord,
@@ -403,6 +410,8 @@ impl PostgresAuditStore {
         artifacts: Option<&crate::proxy::ReplayArtifacts>,
         snapshot: Option<&crate::replay::snapshot::PolicySnapshotRecord>,
     ) -> Result<(), sqlx::Error> {
+        self.insert_execution(record).await?;
+
         if let Some(snap) = snapshot {
             tokio::time::timeout(
                 self.write_timeout,

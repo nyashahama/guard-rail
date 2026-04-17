@@ -91,6 +91,10 @@ policies:
         policies: Arc::new(RwLock::new(policy_set)),
         http_client: Client::new(),
         audit_store: None,
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: guard_rail_engine::audit::hash::hash_string("test"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("test"),
         admin_token: "test-admin-token".to_string(),
@@ -147,6 +151,10 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         )),
         http_client: Client::new(),
         audit_store: None,
+        metrics: None,
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
         admin_token: "stage2-admin-token".to_string(),
@@ -156,7 +164,12 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
-    guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
+    guard_rail_engine::proxy::build_router(
+        state,
+        "stage2-admin-token".to_string(),
+        1_048_576,
+        &guard_rail_engine::config::ObservabilityConfig::default(),
+    )
 }
 
 #[tokio::test]
