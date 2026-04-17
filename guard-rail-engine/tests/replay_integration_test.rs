@@ -13,6 +13,7 @@ pub struct TestHarness {
     pub base_url: String,
     pub tenant_key: String,
     pub store: PostgresAuditStore,
+    pub state: Arc<RwLock<AppState>>,
 }
 
 async fn start_stage4_test_app() -> TestHarness {
@@ -101,6 +102,7 @@ async fn start_stage4_test_app() -> TestHarness {
         base_url,
         tenant_key: "test-tenant-key".into(),
         store,
+        state,
     }
 }
 
