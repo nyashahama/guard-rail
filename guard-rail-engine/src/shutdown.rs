@@ -39,7 +39,10 @@ impl LifecycleState {
     }
 
     pub async fn mark_ready(&self) {
-        *self.phase.write().await = RuntimePhase::Ready;
+        let mut phase = self.phase.write().await;
+        if matches!(*phase, RuntimePhase::Starting | RuntimePhase::Ready) {
+            *phase = RuntimePhase::Ready;
+        }
     }
 
     pub async fn begin_drain(&self) {
@@ -67,6 +70,18 @@ mod tests {
         assert!(lifecycle.is_ready().await);
 
         lifecycle.begin_drain().await;
+        assert!(!lifecycle.is_ready().await);
+        assert_eq!(lifecycle.current().await.as_str(), "draining");
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_state_does_not_return_to_ready_after_drain() {
+        let lifecycle = crate::shutdown::LifecycleState::new();
+
+        lifecycle.mark_ready().await;
+        lifecycle.begin_drain().await;
+        lifecycle.mark_ready().await;
+
         assert!(!lifecycle.is_ready().await);
         assert_eq!(lifecycle.current().await.as_str(), "draining");
     }

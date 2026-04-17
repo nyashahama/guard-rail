@@ -528,6 +528,86 @@ shutdown:
     }
 
     #[test]
+    fn test_load_config_with_stage5_defaults() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+tenant_auth: {}
+rate_limit: {}
+replay: {}
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = crate::config::AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.observability.service_name, "guard-rail-engine");
+        assert!(config.observability.metrics_enabled);
+        assert_eq!(config.observability.metrics_path, "/metrics");
+        assert_eq!(config.observability.trace_header_name, "traceparent");
+        assert_eq!(config.observability.readiness_probe_timeout_ms, 250);
+        assert_eq!(config.shutdown.grace_period_ms, 15_000);
+        assert_eq!(config.shutdown.drain_poll_interval_ms, 50);
+    }
+
+    #[test]
+    fn test_stage5_env_overrides() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+tenant_auth: {}
+rate_limit: {}
+replay: {}
+observability: {}
+shutdown: {}
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var("GUARDRAIL_OBSERVABILITY__SERVICE_NAME", "override-service");
+            std::env::set_var("GUARDRAIL_OBSERVABILITY__METRICS_ENABLED", "false");
+            std::env::set_var("GUARDRAIL_OBSERVABILITY__METRICS_PATH", "/custom-metrics");
+            std::env::set_var("GUARDRAIL_OBSERVABILITY__TRACE_HEADER_NAME", "x-trace-id");
+            std::env::set_var("GUARDRAIL_OBSERVABILITY__READINESS_PROBE_TIMEOUT_MS", "500");
+            std::env::set_var("GUARDRAIL_SHUTDOWN__GRACE_PERIOD_MS", "30000");
+            std::env::set_var("GUARDRAIL_SHUTDOWN__DRAIN_POLL_INTERVAL_MS", "100");
+        }
+
+        let config = crate::config::AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.observability.service_name, "override-service");
+        assert!(!config.observability.metrics_enabled);
+        assert_eq!(config.observability.metrics_path, "/custom-metrics");
+        assert_eq!(config.observability.trace_header_name, "x-trace-id");
+        assert_eq!(config.observability.readiness_probe_timeout_ms, 500);
+        assert_eq!(config.shutdown.grace_period_ms, 30_000);
+        assert_eq!(config.shutdown.drain_poll_interval_ms, 100);
+    }
+
+    #[test]
     fn test_load_config_with_stage2_sections() {
         let _env = EnvTestGuard::new();
         let yaml = r#"
