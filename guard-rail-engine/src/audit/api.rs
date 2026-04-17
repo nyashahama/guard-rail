@@ -1,12 +1,13 @@
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query, State, Extension},
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::storage::postgres::ExecutionAuditRow;
+use crate::auth::context::AuditAccess;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -44,6 +45,7 @@ pub struct IntegrityResponse {
 
 pub async fn list_executions(
     State(state): State<crate::proxy::AppState>,
+    Extension(access): Extension<AuditAccess>,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Json<AuditListResponse>, StatusCode> {
     let store = state
@@ -51,7 +53,7 @@ pub async fn list_executions(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let page = store
-        .list_executions(query, crate::auth::context::AuditAccess::Admin)
+        .list_executions(query, access)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(page))
@@ -59,6 +61,7 @@ pub async fn list_executions(
 
 pub async fn get_execution(
     State(state): State<crate::proxy::AppState>,
+    Extension(access): Extension<AuditAccess>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<ExecutionAuditRow>, StatusCode> {
     let store = state
@@ -70,7 +73,17 @@ pub async fn get_execution(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(row))
+
+    match access {
+        AuditAccess::Admin => Ok(Json(row)),
+        AuditAccess::Tenant { tenant_id } => {
+            if row.tenant_id == Some(tenant_id) {
+                Ok(Json(row))
+            } else {
+                Err(StatusCode::NOT_FOUND)
+            }
+        }
+    }
 }
 
 pub async fn verify_integrity(

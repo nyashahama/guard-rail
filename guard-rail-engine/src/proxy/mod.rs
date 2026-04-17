@@ -2,16 +2,20 @@ pub mod forward;
 pub mod response;
 
 use crate::audit::hash::{hash_body, hash_string};
-use crate::auth::context::{authenticate_tenant_request, RequestAuthContext, RequestAuthFailure};
+use crate::auth::context::{authenticate_tenant_request, RequestAuthContext};
+use crate::auth::rate_limit::TenantRateLimiter;
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
 use crate::routes::RouteTable;
+use crate::tenant::cache::TenantAuthCache;
+use crate::tenant::repository::TenantRepository;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
+use axum::Json;
 use chrono::Utc;
 use reqwest::Client;
 use std::net::SocketAddr;
@@ -33,6 +37,9 @@ pub struct AppState {
     pub tenant_cache: crate::tenant::cache::TenantAuthCache,
     pub rate_limiter: crate::auth::rate_limit::TenantRateLimiter,
 }
+
+unsafe impl Send for AppState {}
+unsafe impl Sync for AppState {}
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -431,25 +438,111 @@ pub fn build_router(
             "/v1/audit/executions/{execution_id}",
             axum::routing::get(crate::audit::api::get_execution),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::require_audit_access,
+        ));
+
+    let audit_admin_routes = axum::Router::new()
         .route(
             "/v1/audit/integrity",
             axum::routing::get(crate::audit::api::verify_integrity),
         )
-        .route_layer(axum::middleware::from_fn_with_state(
-            admin_token,
+        .layer(axum::middleware::from_fn_with_state(
+            admin_token.clone(),
             crate::auth::middleware::require_admin_token,
-        ))
-        .with_state(state.clone());
+        ));
+
+    let admin_routes = axum::Router::new()
+        .route(
+            "/v1/admin/tenants",
+            axum::routing::post(
+                |State(state): State<AppState>, Json(request): Json<super::tenant::api::CreateTenantRequest>| async move {
+                    super::tenant::api::create_tenant(State(state), Json(request)).await
+                },
+            )
+            .get(|State(state): State<AppState>| async move {
+                super::tenant::api::list_tenants(State(state)).await
+            }),
+        )
+        .route(
+            "/v1/admin/tenants/{tenant_id}/keys",
+            axum::routing::post(
+                |State(state): State<AppState>, Path(tenant_id): Path<String>, Json(request): Json<super::tenant::api::CreateApiKeyRequest>| async move {
+                    super::tenant::api::create_api_key(State(state), Path(tenant_id), Json(request)).await
+                },
+            )
+            .get(|State(state): State<AppState>, Path(tenant_id): Path<String>| async move {
+                super::tenant::api::list_api_keys(State(state), Path(tenant_id)).await
+            }),
+        )
+        .route(
+            "/v1/admin/tenants/{tenant_id}/keys/{key_id}/revoke",
+            axum::routing::post(
+                |State(state): State<AppState>, Path((tenant_id, key_id)): Path<(String, String)>, Json(request): Json<super::tenant::api::RevokeApiKeyRequest>| async move {
+                    super::tenant::api::revoke_api_key(State(state), Path((tenant_id, key_id)), Json(request)).await
+                },
+            ),
+        )
+        .route(
+            "/v1/admin/tenants/{tenant_id}/routes",
+            axum::routing::post(
+                |State(state): State<AppState>, Path(tenant_id): Path<String>, Json(request): Json<super::tenant::api::BindRouteRequest>| async move {
+                    super::tenant::api::bind_route(State(state), Path(tenant_id), Json(request)).await
+                },
+            ),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            admin_token.clone(),
+            crate::auth::middleware::require_admin_token,
+        ));
 
     let main_router = axum::Router::new()
         .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .merge(audit_routes)
+        .merge(audit_admin_routes)
+        .merge(admin_routes)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             request_body_limit_bytes,
         ));
 
     main_router.with_state(state)
+}
+
+impl AppState {
+    pub fn for_admin_router() -> Self {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://localhost:5432")
+            .unwrap();
+        Self {
+            routes: Arc::new(RwLock::new(RouteTable::from_routes(vec![]))),
+            policies: Arc::new(RwLock::new(PolicySet::new())),
+            http_client: Client::new(),
+            audit_store: None,
+            route_config_hash: String::new(),
+            policy_set_hash: String::new(),
+            admin_token: String::new(),
+            tenant_repo: TenantRepository::new(pool),
+            tenant_cache: TenantAuthCache::default(),
+            rate_limiter: TenantRateLimiter::new(0, 0),
+        }
+    }
+}
+
+pub async fn refresh_tenant_auth_cache(state: &AppState) -> Result<(), axum::http::StatusCode> {
+    let snapshot = state
+        .tenant_repo
+        .load_auth_snapshot()
+        .await
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    let routes = state.routes.read().await;
+    crate::tenant::cache::validate_all_routes_bound(&routes, &snapshot)
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    drop(routes);
+    state.tenant_cache.replace(snapshot).await;
+    Ok(())
 }
 
 #[allow(dead_code)]
