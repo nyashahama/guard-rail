@@ -194,6 +194,16 @@ impl AppConfig {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("config test env lock poisoned")
+    }
 
     fn clear_env_vars() {
         unsafe {
@@ -211,9 +221,27 @@ mod tests {
         }
     }
 
+    struct EnvTestGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl EnvTestGuard {
+        fn new() -> Self {
+            let lock = env_lock();
+            clear_env_vars();
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for EnvTestGuard {
+        fn drop(&mut self) {
+            clear_env_vars();
+        }
+    }
+
     #[test]
     fn test_load_valid_config() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -253,7 +281,7 @@ rate_limit:
 
     #[test]
     fn test_load_config_with_defaults() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "0.0.0.0"
@@ -285,6 +313,7 @@ rate_limit: {}
 
     #[test]
     fn test_load_invalid_yaml_errors() {
+        let _env = EnvTestGuard::new();
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(b"not: [valid: yaml: {{").unwrap();
 
@@ -294,7 +323,7 @@ rate_limit: {}
 
     #[test]
     fn test_load_config_with_stage3_sections() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -325,7 +354,7 @@ rate_limit:
 
     #[test]
     fn test_load_config_with_stage4_replay_section() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -359,7 +388,7 @@ replay:
 
     #[test]
     fn test_load_config_with_stage2_sections() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "127.0.0.1"
@@ -396,7 +425,7 @@ rate_limit:
 
     #[test]
     fn test_stage2_env_overrides() {
-        clear_env_vars();
+        let _env = EnvTestGuard::new();
         let yaml = r#"
 server:
   host: "0.0.0.0"
@@ -415,24 +444,6 @@ rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.write_all(yaml.as_bytes()).unwrap();
-
-        struct EnvGuard;
-
-        impl Drop for EnvGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    std::env::remove_var("GUARDRAIL_DATABASE__URL");
-                    std::env::remove_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS");
-                    std::env::remove_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS");
-                    std::env::remove_var("GUARDRAIL_ADMIN__TOKEN");
-                    std::env::remove_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME");
-                    std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
-                    std::env::remove_var("GUARDRAIL_RATE_LIMIT__BURST");
-                }
-            }
-        }
-
-        let _guard = EnvGuard;
 
         unsafe {
             std::env::set_var(

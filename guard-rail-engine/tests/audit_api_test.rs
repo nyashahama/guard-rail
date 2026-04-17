@@ -1,5 +1,6 @@
 use guard_rail_engine::execution::{ExecutionRecord, ExecutionVerdict};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
+use std::sync::{Arc, OnceLock};
 use tower::util::ServiceExt;
 
 async fn start_mock_upstream(status: u16, body: &'static str) -> String {
@@ -25,11 +26,51 @@ fn write_file(dir: &std::path::Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
 }
 
-async fn start_stage2_test_app() -> (
-    String,
-    guard_rail_engine::storage::postgres::PostgresAuditStore,
-    tempfile::TempDir,
-) {
+async fn reset_test_database(pool: &sqlx::PgPool) {
+    sqlx::query(
+        r#"
+        truncate table
+            replay_runs,
+            execution_artifacts,
+            policy_snapshots,
+            execution_audit,
+            tenant_routes,
+            api_keys,
+            tenants
+        restart identity cascade
+        "#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+static TEST_DB_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+
+struct TestDatabaseGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl TestDatabaseGuard {
+    async fn acquire() -> Self {
+        let lock = TEST_DB_LOCK
+            .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Self {
+            _guard: lock.lock_owned().await,
+        }
+    }
+}
+
+struct Stage2TestHarness {
+    base_url: String,
+    store: guard_rail_engine::storage::postgres::PostgresAuditStore,
+    _tmp: tempfile::TempDir,
+    _db_guard: TestDatabaseGuard,
+}
+
+async fn start_stage2_test_app() -> Stage2TestHarness {
+    let db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -37,10 +78,7 @@ async fn start_stage2_test_app() -> (
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query("truncate table execution_audit restart identity")
-        .execute(&pool)
-        .await
-        .unwrap();
+    reset_test_database(&pool).await;
 
     let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
         pool,
@@ -126,10 +164,21 @@ policies:
         .unwrap();
     });
 
-    (format!("http://{}", addr), store, tmp)
+    Stage2TestHarness {
+        base_url: format!("http://{}", addr),
+        store,
+        _tmp: tmp,
+        _db_guard: db_guard,
+    }
 }
 
-async fn build_test_router_with_audit_store() -> axum::Router {
+struct AuditRouterHarness {
+    app: axum::Router,
+    _db_guard: TestDatabaseGuard,
+}
+
+async fn build_test_router_with_audit_store() -> AuditRouterHarness {
+    let db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -137,10 +186,7 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query("truncate table execution_audit restart identity")
-        .execute(&pool)
-        .await
-        .unwrap();
+    reset_test_database(&pool).await;
 
     let audit_store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
         pool,
@@ -177,11 +223,18 @@ async fn build_test_router_with_audit_store() -> axum::Router {
         replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
-    guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
+    AuditRouterHarness {
+        app: guard_rail_engine::proxy::build_router(
+            state,
+            "stage2-admin-token".to_string(),
+            1_048_576,
+        ),
+        _db_guard: db_guard,
+    }
 }
 
-async fn build_test_router_with_seeded_audit_rows() -> axum::Router {
-    let app = build_test_router_with_audit_store().await;
+async fn build_test_router_with_seeded_audit_rows() -> AuditRouterHarness {
+    let harness = build_test_router_with_audit_store().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -228,15 +281,15 @@ async fn build_test_router_with_seeded_audit_rows() -> axum::Router {
         store.insert_execution(&record).await.unwrap();
     }
 
-    app
+    harness
 }
 
 #[tokio::test]
 async fn test_invalid_json_on_known_route_persists_rejected_audit_row() {
-    let (base_url, store, _tmp) = start_stage2_test_app().await;
+    let harness = start_stage2_test_app().await;
 
     let response = reqwest::Client::new()
-        .post(format!("{}/v1/execute/test-route", base_url))
+        .post(format!("{}/v1/execute/test-route", harness.base_url))
         .header("content-type", "application/json")
         .body("not valid json")
         .send()
@@ -255,7 +308,8 @@ async fn test_invalid_json_on_known_route_persists_rejected_audit_row() {
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let row = store
+    let row = harness
+        .store
         .get_execution_by_id(&execution_id)
         .await
         .unwrap()
@@ -266,10 +320,10 @@ async fn test_invalid_json_on_known_route_persists_rejected_audit_row() {
 
 #[tokio::test]
 async fn test_unknown_route_is_not_persisted() {
-    let (base_url, store, _tmp) = start_stage2_test_app().await;
+    let harness = start_stage2_test_app().await;
 
     let response = reqwest::Client::new()
-        .post(format!("{}/v1/execute/missing-route", base_url))
+        .post(format!("{}/v1/execute/missing-route", harness.base_url))
         .header("content-type", "application/json")
         .body(r#"{"value":1}"#)
         .send()
@@ -279,7 +333,7 @@ async fn test_unknown_route_is_not_persisted() {
     assert_eq!(response.status(), 404);
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    assert_eq!(store.count_executions().await.unwrap(), 0);
+    assert_eq!(harness.store.count_executions().await.unwrap(), 0);
 }
 
 #[tokio::test]
@@ -295,10 +349,7 @@ async fn test_insert_execution_and_fetch_it_back() {
     }
 
     async fn reset_execution_audit(pool: &sqlx::PgPool) {
-        sqlx::query("truncate table execution_audit restart identity")
-            .execute(pool)
-            .await
-            .unwrap();
+        reset_test_database(pool).await;
     }
 
     fn sample_blocked_record() -> ExecutionRecord {
@@ -339,6 +390,7 @@ async fn test_insert_execution_and_fetch_it_back() {
         }
     }
 
+    let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = connect_test_pool(&database_url).await;
     reset_execution_audit(&pool).await;
@@ -361,6 +413,7 @@ async fn test_insert_execution_and_fetch_it_back() {
 
 #[tokio::test]
 async fn test_stage3_migration_creates_tenant_tables() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -388,7 +441,7 @@ async fn test_stage3_migration_creates_tenant_tables() {
 
 #[tokio::test]
 async fn test_audit_list_returns_newest_first() {
-    let app = build_test_router_with_seeded_audit_rows().await;
+    let harness = build_test_router_with_seeded_audit_rows().await;
 
     let req = axum::http::Request::builder()
         .uri("/v1/audit/executions?limit=2")
@@ -396,7 +449,7 @@ async fn test_audit_list_returns_newest_first() {
         .body(axum::body::Body::empty())
         .unwrap();
 
-    let response = app.oneshot(req).await.unwrap();
+    let response = harness.app.oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), axum::http::StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -413,6 +466,7 @@ async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3Te
     use guard_rail_engine::tenant::cache::TenantAuthCache;
     use guard_rail_engine::tenant::repository::TenantRepository;
 
+    let db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -420,12 +474,7 @@ async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3Te
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query(
-        "truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    reset_test_database(&pool).await;
 
     let repo = TenantRepository::new(pool.clone());
     let tenant_a = repo.create_tenant("tenant-a").await.unwrap();
@@ -514,6 +563,7 @@ routes:
         tenant_a_key: key_a.raw_key,
         tenant_b_id: tenant_b.id,
         tenant_b_key: key_b.raw_key,
+        _db_guard: db_guard,
     }
 }
 
@@ -523,6 +573,7 @@ struct Stage3TestHarness {
     tenant_a_key: String,
     tenant_b_id: uuid::Uuid,
     tenant_b_key: String,
+    _db_guard: TestDatabaseGuard,
 }
 
 #[tokio::test]

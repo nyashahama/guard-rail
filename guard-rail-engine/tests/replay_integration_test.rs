@@ -5,18 +5,75 @@ use guard_rail_engine::replay::snapshot::{build_snapshot, build_snapshot_from_se
 use guard_rail_engine::routes::Route;
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
 use sqlx::postgres::PgPoolOptions;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 
-#[derive(Clone)]
 pub struct TestHarness {
     pub base_url: String,
     pub tenant_key: String,
     pub store: PostgresAuditStore,
     pub state: AppState,
+    _db_guard: TestDatabaseGuard,
+}
+
+static TEST_DB_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+
+struct TestDatabaseGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl TestDatabaseGuard {
+    async fn acquire() -> Self {
+        let lock = TEST_DB_LOCK
+            .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Self {
+            _guard: lock.lock_owned().await,
+        }
+    }
+}
+
+async fn reset_test_database(pool: &sqlx::PgPool) {
+    sqlx::query(
+        r#"
+        truncate table
+            replay_runs,
+            execution_artifacts,
+            policy_snapshots,
+            execution_audit,
+            tenant_routes,
+            api_keys,
+            tenants
+        restart identity cascade
+        "#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn start_mock_upstream(status: u16, body: &'static str) -> String {
+    let app = axum::Router::new().route(
+        "/{*path}",
+        axum::routing::any(move || async move {
+            (
+                axum::http::StatusCode::from_u16(status).unwrap(),
+                body.to_string(),
+            )
+        }),
+    );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    format!("http://{}", addr)
 }
 
 async fn start_stage4_test_app() -> TestHarness {
+    let db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -25,15 +82,17 @@ async fn start_stage4_test_app() -> TestHarness {
         .unwrap();
 
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    reset_test_database(&pool).await;
 
     let store = PostgresAuditStore::new(pool, std::time::Duration::from_millis(250));
+    let upstream = start_mock_upstream(200, r#"{"ok":true}"#).await;
 
     let routes = Arc::new(RwLock::new(
         guard_rail_engine::routes::RouteTable::from_routes(vec![
             guard_rail_engine::routes::Route {
                 id: "test-route".into(),
                 path: "/v1/execute/test-route".into(),
-                upstream: "http://127.0.0.1:19999".into(),
+                upstream: format!("{upstream}/blocked"),
                 methods: vec!["POST".into()],
                 policies: vec!["block-callbacks".into()],
                 timeout_ms: 5000,
@@ -41,7 +100,7 @@ async fn start_stage4_test_app() -> TestHarness {
             guard_rail_engine::routes::Route {
                 id: "open-route".into(),
                 path: "/v1/execute/open-route".into(),
-                upstream: "http://127.0.0.1:19999".into(),
+                upstream: format!("{upstream}/open"),
                 methods: vec!["POST".into()],
                 policies: vec![],
                 timeout_ms: 5000,
@@ -53,7 +112,16 @@ async fn start_stage4_test_app() -> TestHarness {
         guard_rail_engine::policy::Policy {
             name: "block-callbacks".into(),
             description: "Block callback URLs".into(),
-            rules: vec![],
+            rules: vec![guard_rail_engine::policy::Rule {
+                field: "$.callback".into(),
+                condition: "domain_not_in".into(),
+                values: vec!["*.safe.com".into()],
+                value: None,
+                pattern: None,
+                max_bytes: None,
+                action: "block".into(),
+                severity: "critical".into(),
+            }],
         },
     ])));
 
@@ -88,7 +156,10 @@ async fn start_stage4_test_app() -> TestHarness {
     let base_url = format!("http://{}", addr);
 
     tokio::spawn(async move {
-        axum::serve(listener, app.into_make_service())
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
             .await
             .unwrap();
     });
@@ -100,6 +171,7 @@ async fn start_stage4_test_app() -> TestHarness {
         tenant_key: "test-tenant-key".into(),
         store,
         state,
+        _db_guard: db_guard,
     }
 }
 
@@ -165,6 +237,7 @@ fn test_snapshot_builder_uses_only_route_referenced_policies() {
 
 #[tokio::test]
 async fn test_stage4_migration_creates_replay_tables() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = PgPoolOptions::new()
         .max_connections(5)

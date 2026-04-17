@@ -1,5 +1,44 @@
+use std::sync::{Arc, OnceLock};
+
+static TEST_DB_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+
+struct TestDatabaseGuard {
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl TestDatabaseGuard {
+    async fn acquire() -> Self {
+        let lock = TEST_DB_LOCK
+            .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Self {
+            _guard: lock.lock_owned().await,
+        }
+    }
+}
+
+async fn reset_test_database(pool: &sqlx::PgPool) {
+    sqlx::query(
+        r#"
+        truncate table
+            replay_runs,
+            execution_artifacts,
+            policy_snapshots,
+            execution_audit,
+            tenant_routes,
+            api_keys,
+            tenants
+        restart identity cascade
+        "#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn test_create_tenant_and_api_key_persists_hash_only() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -30,6 +69,7 @@ async fn test_create_tenant_and_api_key_persists_hash_only() {
 
 #[tokio::test]
 async fn test_load_auth_cache_returns_only_active_keys_and_bindings() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -89,6 +129,7 @@ struct Stage3TestApp {
     #[allow(dead_code)]
     tenant_b_id: uuid::Uuid,
     tenant_b_key: String,
+    _db_guard: TestDatabaseGuard,
 }
 
 impl Stage3TestApp {
@@ -105,6 +146,7 @@ impl Stage3TestApp {
 }
 
 async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3TestApp {
+    let db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
@@ -112,12 +154,7 @@ async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3Te
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query(
-        "truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    reset_test_database(&pool).await;
 
     let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
     let tenant_a = repo.create_tenant("tenant-a").await.unwrap();
@@ -204,6 +241,7 @@ routes:
         tenant_a_key: key_a.raw_key,
         tenant_b_id: tenant_b.id,
         tenant_b_key: key_b.raw_key,
+        _db_guard: db_guard,
     }
 }
 

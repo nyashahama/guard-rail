@@ -403,6 +403,8 @@ impl PostgresAuditStore {
         artifacts: Option<&crate::proxy::ReplayArtifacts>,
         snapshot: Option<&crate::replay::snapshot::PolicySnapshotRecord>,
     ) -> Result<(), sqlx::Error> {
+        self.insert_execution(record).await?;
+
         if let Some(snap) = snapshot {
             tokio::time::timeout(
                 self.write_timeout,
