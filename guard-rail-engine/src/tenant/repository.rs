@@ -1,6 +1,6 @@
-use crate::auth::api_keys::{generate_api_key, hash_api_key, key_prefix, IssuedApiKey};
-use crate::tenant::cache::{CachedApiKey, TenantAuthSnapshot};
+use crate::auth::api_keys::{IssuedApiKey, generate_api_key, hash_api_key, key_prefix};
 use crate::tenant::Tenant;
+use crate::tenant::cache::{CachedApiKey, TenantAuthSnapshot};
 use sqlx::Row;
 
 #[derive(Clone)]
@@ -67,7 +67,11 @@ impl TenantRepository {
         })
     }
 
-    pub async fn bind_route(&self, route_id: &str, tenant_id: uuid::Uuid) -> Result<(), sqlx::Error> {
+    pub async fn bind_route(
+        &self,
+        route_id: &str,
+        tenant_id: uuid::Uuid,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             insert into tenant_routes (route_id, tenant_id)

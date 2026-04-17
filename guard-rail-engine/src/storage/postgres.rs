@@ -192,10 +192,12 @@ impl PostgresAuditStore {
     ) -> Result<crate::audit::api::AuditListResponse, sqlx::Error> {
         match access {
             crate::auth::context::AuditAccess::Admin => {
-                self.list_executions_for_tenant(query.tenant_id, query).await
+                self.list_executions_for_tenant(query.tenant_id, query)
+                    .await
             }
             crate::auth::context::AuditAccess::Tenant { tenant_id } => {
-                self.list_executions_for_tenant(Some(tenant_id), query).await
+                self.list_executions_for_tenant(Some(tenant_id), query)
+                    .await
             }
         }
     }
@@ -246,17 +248,15 @@ impl PostgresAuditStore {
             )
         };
 
-        let sql = format!("{} {} limit {} offset {}", base_sql, order_sql, limit, offset);
+        let sql = format!(
+            "{} {} limit {} offset {}",
+            base_sql, order_sql, limit, offset
+        );
 
         let rows = if let Some(tid) = bind_tenant_id {
-            sqlx::query(&sql)
-                .bind(tid)
-                .fetch_all(&self.pool)
-                .await?
+            sqlx::query(&sql).bind(tid).fetch_all(&self.pool).await?
         } else {
-            sqlx::query(&sql)
-                .fetch_all(&self.pool)
-                .await?
+            sqlx::query(&sql).fetch_all(&self.pool).await?
         };
 
         let items: Vec<ExecutionAuditRow> = rows

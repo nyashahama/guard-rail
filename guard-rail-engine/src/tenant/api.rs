@@ -65,7 +65,9 @@ pub async fn list_tenants(
         .list_tenants()
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(tenants.into_iter().map(TenantResponse::from).collect()))
+    Ok(Json(
+        tenants.into_iter().map(TenantResponse::from).collect(),
+    ))
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -82,7 +84,9 @@ pub async fn create_api_key(
     Path(tenant_id): Path<String>,
     Json(request): Json<CreateApiKeyRequest>,
 ) -> Result<Json<ApiKeyResponse>, axum::http::StatusCode> {
-    let tenant_id = tenant_id.parse::<uuid::Uuid>().map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let tenant_id = tenant_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     let key = state
         .tenant_repo
         .create_api_key(tenant_id, &request.name)
@@ -111,7 +115,9 @@ pub async fn list_api_keys(
     State(state): State<crate::proxy::AppState>,
     Path(tenant_id): Path<String>,
 ) -> Result<Json<Vec<ApiKeyListItem>>, axum::http::StatusCode> {
-    let tenant_id = tenant_id.parse::<uuid::Uuid>().map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let tenant_id = tenant_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     let keys = state
         .tenant_repo
         .list_api_keys(tenant_id)
@@ -125,7 +131,9 @@ pub async fn revoke_api_key(
     Path((_tenant_id, key_id)): Path<(String, String)>,
     Json(request): Json<RevokeApiKeyRequest>,
 ) -> Result<Json<()>, axum::http::StatusCode> {
-    let key_id = key_id.parse::<uuid::Uuid>().map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let key_id = key_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     state
         .tenant_repo
         .revoke_api_key(key_id, request.reason.as_deref())
@@ -140,7 +148,9 @@ pub async fn bind_route(
     Path(tenant_id): Path<String>,
     Json(request): Json<BindRouteRequest>,
 ) -> Result<Json<()>, axum::http::StatusCode> {
-    let tenant_id = tenant_id.parse::<uuid::Uuid>().map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    let tenant_id = tenant_id
+        .parse::<uuid::Uuid>()
+        .map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     state
         .tenant_repo
         .bind_route(&request.route_id, tenant_id)

@@ -36,20 +36,22 @@ pub async fn require_audit_access(
 ) -> Result<Response, StatusCode> {
     if has_valid_admin_token(request.headers(), &state.admin_token) {
         let mut request = request;
-        request.extensions_mut().insert(crate::auth::context::AuditAccess::Admin);
+        request
+            .extensions_mut()
+            .insert(crate::auth::context::AuditAccess::Admin);
         return Ok(next.run(request).await);
     }
 
-    let tenant = crate::auth::context::authenticate_tenant_request(
-        request.headers(),
-        &state.tenant_cache,
-    )
-    .await
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let tenant =
+        crate::auth::context::authenticate_tenant_request(request.headers(), &state.tenant_cache)
+            .await
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let mut request = request;
     if let crate::auth::context::RequestAuthContext::Tenant { tenant_id, .. } = tenant {
-        request.extensions_mut().insert(crate::auth::context::AuditAccess::Tenant { tenant_id });
+        request
+            .extensions_mut()
+            .insert(crate::auth::context::AuditAccess::Tenant { tenant_id });
     }
     Ok(next.run(request).await)
 }

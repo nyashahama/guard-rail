@@ -86,7 +86,7 @@ policies:
     let route_table = guard_rail_engine::routes::RouteTable::load(&routes_path).unwrap();
     let policy_set = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
 
-let state = guard_rail_engine::proxy::AppState {
+    let state = guard_rail_engine::proxy::AppState {
         routes: Arc::new(RwLock::new(route_table)),
         policies: Arc::new(RwLock::new(policy_set)),
         http_client: Client::new(),

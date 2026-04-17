@@ -2,7 +2,7 @@ pub mod forward;
 pub mod response;
 
 use crate::audit::hash::{hash_body, hash_string};
-use crate::auth::context::{authenticate_tenant_request, RequestAuthContext};
+use crate::auth::context::{RequestAuthContext, authenticate_tenant_request};
 use crate::auth::rate_limit::TenantRateLimiter;
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
@@ -11,11 +11,11 @@ use crate::policy::engine::{Verdict, evaluate};
 use crate::routes::RouteTable;
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{HeaderMap, Method};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use chrono::Utc;
 use reqwest::Client;
 use std::net::SocketAddr;
@@ -121,7 +121,11 @@ pub async fn handle_execute(
     // 2. Tenant authentication
     let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
     let (tenant_id, api_key_id, auth_outcome) = match auth_result {
-        Ok(RequestAuthContext::Tenant { tenant_id, api_key_id, .. }) => {
+        Ok(RequestAuthContext::Tenant {
+            tenant_id,
+            api_key_id,
+            ..
+        }) => {
             let snapshot = state.tenant_cache.snapshot().await;
             let bound_tenant_id = snapshot.route_bindings.get(&route_id);
             if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
@@ -160,7 +164,11 @@ pub async fn handle_execute(
                     policy_set_hash: state.policy_set_hash.clone(),
                 };
                 spawn_emit_and_persist(record, state.audit_store.clone());
-                return (axum::http::StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded").into_response();
+                return (
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    "Rate limit exceeded",
+                )
+                    .into_response();
             }
             (Some(tenant_id), Some(api_key_id), None)
         }
@@ -249,9 +257,9 @@ pub async fn handle_execute(
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
-tenant_id,
-            api_key_id,
-            auth_outcome,
+                tenant_id,
+                api_key_id,
+                auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -304,9 +312,9 @@ tenant_id,
                 execution_id: execution_id.clone(),
                 execution_started_at,
                 route_id: route_id.clone(),
-tenant_id,
-            api_key_id,
-            auth_outcome,
+                tenant_id,
+                api_key_id,
+                auth_outcome,
                 upstream_url: Some(route.upstream.clone()),
                 method: method_str.clone(),
                 source_ip: source_ip.clone(),
@@ -457,7 +465,8 @@ pub fn build_router(
         .route(
             "/v1/admin/tenants",
             axum::routing::post(
-                |State(state): State<AppState>, Json(request): Json<super::tenant::api::CreateTenantRequest>| async move {
+                |State(state): State<AppState>,
+                 Json(request): Json<super::tenant::api::CreateTenantRequest>| async move {
                     super::tenant::api::create_tenant(State(state), Json(request)).await
                 },
             )
@@ -468,27 +477,42 @@ pub fn build_router(
         .route(
             "/v1/admin/tenants/{tenant_id}/keys",
             axum::routing::post(
-                |State(state): State<AppState>, Path(tenant_id): Path<String>, Json(request): Json<super::tenant::api::CreateApiKeyRequest>| async move {
-                    super::tenant::api::create_api_key(State(state), Path(tenant_id), Json(request)).await
+                |State(state): State<AppState>,
+                 Path(tenant_id): Path<String>,
+                 Json(request): Json<super::tenant::api::CreateApiKeyRequest>| async move {
+                    super::tenant::api::create_api_key(State(state), Path(tenant_id), Json(request))
+                        .await
                 },
             )
-            .get(|State(state): State<AppState>, Path(tenant_id): Path<String>| async move {
-                super::tenant::api::list_api_keys(State(state), Path(tenant_id)).await
-            }),
+            .get(
+                |State(state): State<AppState>, Path(tenant_id): Path<String>| async move {
+                    super::tenant::api::list_api_keys(State(state), Path(tenant_id)).await
+                },
+            ),
         )
         .route(
             "/v1/admin/tenants/{tenant_id}/keys/{key_id}/revoke",
             axum::routing::post(
-                |State(state): State<AppState>, Path((tenant_id, key_id)): Path<(String, String)>, Json(request): Json<super::tenant::api::RevokeApiKeyRequest>| async move {
-                    super::tenant::api::revoke_api_key(State(state), Path((tenant_id, key_id)), Json(request)).await
+                |State(state): State<AppState>,
+                 Path((tenant_id, key_id)): Path<(String, String)>,
+                 Json(request): Json<super::tenant::api::RevokeApiKeyRequest>| async move {
+                    super::tenant::api::revoke_api_key(
+                        State(state),
+                        Path((tenant_id, key_id)),
+                        Json(request),
+                    )
+                    .await
                 },
             ),
         )
         .route(
             "/v1/admin/tenants/{tenant_id}/routes",
             axum::routing::post(
-                |State(state): State<AppState>, Path(tenant_id): Path<String>, Json(request): Json<super::tenant::api::BindRouteRequest>| async move {
-                    super::tenant::api::bind_route(State(state), Path(tenant_id), Json(request)).await
+                |State(state): State<AppState>,
+                 Path(tenant_id): Path<String>,
+                 Json(request): Json<super::tenant::api::BindRouteRequest>| async move {
+                    super::tenant::api::bind_route(State(state), Path(tenant_id), Json(request))
+                        .await
                 },
             ),
         )
@@ -591,7 +615,17 @@ pub fn compute_state(
         route_config_hash,
         policy_set_hash,
         admin_token: String::new(),
-        tenant_repo: pool.ok().map(crate::tenant::repository::TenantRepository::new).unwrap_or_else(|| crate::tenant::repository::TenantRepository::new(sqlx::postgres::PgPoolOptions::new().max_connections(1).connect_lazy("").unwrap())),
+        tenant_repo: pool
+            .ok()
+            .map(crate::tenant::repository::TenantRepository::new)
+            .unwrap_or_else(|| {
+                crate::tenant::repository::TenantRepository::new(
+                    sqlx::postgres::PgPoolOptions::new()
+                        .max_connections(1)
+                        .connect_lazy("")
+                        .unwrap(),
+                )
+            }),
         tenant_cache: crate::tenant::cache::TenantAuthCache::default(),
         rate_limiter: crate::auth::rate_limit::TenantRateLimiter::new(120, 30),
     }

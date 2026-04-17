@@ -1,7 +1,6 @@
 #[tokio::test]
 async fn test_create_tenant_and_api_key_persists_hash_only() {
-    let database_url =
-        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -31,8 +30,7 @@ async fn test_create_tenant_and_api_key_persists_hash_only() {
 
 #[tokio::test]
 async fn test_load_auth_cache_returns_only_active_keys_and_bindings() {
-    let database_url =
-        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -46,15 +44,14 @@ async fn test_load_auth_cache_returns_only_active_keys_and_bindings() {
     let issued = repo.create_api_key(tenant.id, "primary").await.unwrap();
     let unique_route = format!("test-route-{}", uuid::Uuid::new_v4());
     repo.bind_route(&unique_route, tenant.id).await.unwrap();
-    repo.revoke_api_key(issued.id, Some("rotated")).await.unwrap();
+    repo.revoke_api_key(issued.id, Some("rotated"))
+        .await
+        .unwrap();
 
     let snapshot = repo.load_auth_snapshot().await.unwrap();
     assert!(snapshot.route_bindings.contains_key(&unique_route));
     assert!(
-        !snapshot
-            .api_keys
-            .values()
-            .any(|k| k.id == issued.id),
+        !snapshot.api_keys.values().any(|k| k.id == issued.id),
         "revoked key should not be in cache"
     );
 }
@@ -105,22 +102,20 @@ impl Stage3TestApp {
     }
 }
 
-async fn start_stage3_test_app(
-    requests_per_minute: u32,
-    burst: u32,
-) -> Stage3TestApp {
-    let database_url =
-        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3TestApp {
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    sqlx::query("truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "truncate table execution_audit, tenant_routes, api_keys, tenants restart identity cascade",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
     let tenant_a = repo.create_tenant("tenant-a").await.unwrap();
@@ -128,7 +123,9 @@ async fn start_stage3_test_app(
     let key_a = repo.create_api_key(tenant_a.id, "primary-a").await.unwrap();
     let key_b = repo.create_api_key(tenant_b.id, "primary-b").await.unwrap();
     repo.bind_route("test-route", tenant_a.id).await.unwrap();
-    repo.bind_route("tenant-b-route", tenant_b.id).await.unwrap();
+    repo.bind_route("tenant-b-route", tenant_b.id)
+        .await
+        .unwrap();
 
     let snapshot = repo.load_auth_snapshot().await.unwrap();
     let tenant_cache = guard_rail_engine::tenant::cache::TenantAuthCache::default();
@@ -159,7 +156,8 @@ routes:
     std::fs::create_dir_all(&policies_dir).unwrap();
     write_file(&policies_dir, "policy.yaml", "policies: []\n");
 
-    let routes = guard_rail_engine::routes::RouteTable::load(&tmp.path().join("routes.yaml")).unwrap();
+    let routes =
+        guard_rail_engine::routes::RouteTable::load(&tmp.path().join("routes.yaml")).unwrap();
     let policies = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
     let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
         pool.clone(),
@@ -182,7 +180,8 @@ routes:
         ),
     };
 
-    let app = guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576);
+    let app =
+        guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -221,22 +220,27 @@ async fn test_missing_api_key_returns_401_and_audits_event() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let rows = harness.store.list_executions(
-        guard_rail_engine::audit::api::AuditListQuery {
-            tenant_id: None,
-            route_id: None,
-            verdict: None,
-            from: None,
-            to: None,
-            limit: None,
-            cursor: None,
-            order: None,
-        },
-        guard_rail_engine::auth::context::AuditAccess::Admin,
-    )
-    .await
-    .unwrap();
-    assert_eq!(rows.items[0].auth_outcome.as_deref(), Some("missing_api_key"));
+    let rows = harness
+        .store
+        .list_executions(
+            guard_rail_engine::audit::api::AuditListQuery {
+                tenant_id: None,
+                route_id: None,
+                verdict: None,
+                from: None,
+                to: None,
+                limit: None,
+                cursor: None,
+                order: None,
+            },
+            guard_rail_engine::auth::context::AuditAccess::Admin,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rows.items[0].auth_outcome.as_deref(),
+        Some("missing_api_key")
+    );
 }
 
 #[tokio::test]
