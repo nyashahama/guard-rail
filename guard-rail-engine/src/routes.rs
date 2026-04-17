@@ -59,6 +59,7 @@ impl RouteTable {
         names
     }
 
+    #[allow(dead_code)]
     pub fn from_routes(routes: Vec<Route>) -> Self {
         let by_id = routes
             .into_iter()

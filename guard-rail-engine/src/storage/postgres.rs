@@ -79,8 +79,8 @@ impl PostgresAuditStore {
             .bind(&record.execution_id)
             .bind(record.execution_started_at)
             .bind(&record.route_id)
-            .bind(&record.tenant_id)
-            .bind(&record.api_key_id)
+            .bind(record.tenant_id)
+            .bind(record.api_key_id)
             .bind(&record.auth_outcome)
             .bind(&record.upstream_url)
             .bind(&record.method)
@@ -298,7 +298,7 @@ impl PostgresAuditStore {
             })
             .collect();
 
-        let total = if let Some(tid) = bind_tenant_id {
+        let total = if let Some(_tid) = bind_tenant_id {
             sqlx::query_scalar::<_, i64>(
                 "select count(*) from execution_audit where tenant_id = $1",
             )

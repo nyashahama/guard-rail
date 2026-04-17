@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum RequestAuthContext {
     Admin,
     Tenant {
@@ -17,6 +18,7 @@ pub enum AuditAccess {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum RequestAuthFailure {
     MissingApiKey,
     InvalidApiKey,

@@ -54,6 +54,7 @@ impl std::fmt::Debug for AppState {
     }
 }
 
+#[allow(dead_code)]
 async fn emit_and_persist(
     record: ExecutionRecord,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
@@ -535,6 +536,7 @@ pub fn build_router(
 }
 
 impl AppState {
+    #[allow(dead_code)]
     pub fn for_admin_router() -> Self {
         let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)

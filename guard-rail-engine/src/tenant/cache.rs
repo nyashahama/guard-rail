@@ -9,6 +9,7 @@ pub struct TenantAuthSnapshot {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CachedApiKey {
     pub id: uuid::Uuid,
     pub tenant_id: uuid::Uuid,
