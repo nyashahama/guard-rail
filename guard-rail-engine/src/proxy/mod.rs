@@ -120,97 +120,104 @@ pub async fn handle_execute(
     drop(routes);
 
     // 2. Tenant authentication
-    let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
-    let (tenant_id, api_key_id, auth_outcome) = match auth_result {
-        Ok(RequestAuthContext::Tenant {
-            tenant_id,
-            api_key_id,
-            ..
-        }) => {
-            let snapshot = state.tenant_cache.snapshot().await;
-            let bound_tenant_id = snapshot.route_bindings.get(&route_id);
-            if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
-                return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
+    let snapshot = state.tenant_cache.snapshot().await;
+    let route_is_bound = snapshot.route_bindings.contains_key(&route_id);
+
+    let (tenant_id, api_key_id, auth_outcome) =
+        if !route_is_bound {
+            (None, None, None)
+        } else {
+            let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
+            match auth_result {
+                Ok(RequestAuthContext::Tenant {
+                    tenant_id,
+                    api_key_id,
+                    ..
+                }) => {
+                    let bound_tenant_id = snapshot.route_bindings.get(&route_id);
+                    if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
+                        return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
+                    }
+                    if !state.rate_limiter.allow(tenant_id).await {
+                        let record = ExecutionRecord {
+                            execution_id: execution_id.clone(),
+                            execution_started_at,
+                            route_id: route_id.clone(),
+                            tenant_id: Some(tenant_id),
+                            api_key_id: Some(api_key_id),
+                            auth_outcome: Some("rate_limited".to_string()),
+                            upstream_url: Some(route.upstream.clone()),
+                            method: method.to_string(),
+                            source_ip: source_ip.clone(),
+                            content_type,
+                            user_agent,
+                            had_authorization_header,
+                            request_size_bytes,
+                            request_body_sha256,
+                            verdict: ExecutionVerdict::Rejected,
+                            rejection_reason: Some("rate_limit_exceeded".to_string()),
+                            matched_policy_name: None,
+                            matched_rule_field: None,
+                            matched_rule_condition: None,
+                            matched_rule_severity: None,
+                            violation_value_hash: None,
+                            violation_value_preview: None,
+                            upstream_status: None,
+                            forward_error: None,
+                            latency_inspect_us: 0,
+                            latency_forward_ms: None,
+                            latency_total_ms: total_start.elapsed().as_millis(),
+                            route_config_hash: state.route_config_hash.clone(),
+                            policy_set_hash: state.policy_set_hash.clone(),
+                        };
+                        spawn_emit_and_persist(record, state.audit_store.clone());
+                        return (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            "Rate limit exceeded",
+                        )
+                            .into_response();
+                    }
+                    (Some(tenant_id), Some(api_key_id), None)
+                }
+                Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
+                Err(auth_failure) => {
+                    let auth_outcome_str = auth_failure.as_str().to_string();
+                    let record = ExecutionRecord {
+                        execution_id: execution_id.clone(),
+                        execution_started_at,
+                        route_id: route_id.clone(),
+                        tenant_id: None,
+                        api_key_id: None,
+                        auth_outcome: Some(auth_outcome_str.clone()),
+                        upstream_url: Some(route.upstream.clone()),
+                        method: method.to_string(),
+                        source_ip: source_ip.clone(),
+                        content_type,
+                        user_agent,
+                        had_authorization_header,
+                        request_size_bytes,
+                        request_body_sha256,
+                        verdict: ExecutionVerdict::Rejected,
+                        rejection_reason: Some(auth_outcome_str),
+                        matched_policy_name: None,
+                        matched_rule_field: None,
+                        matched_rule_condition: None,
+                        matched_rule_severity: None,
+                        violation_value_hash: None,
+                        violation_value_preview: None,
+                        upstream_status: None,
+                        forward_error: None,
+                        latency_inspect_us: 0,
+                        latency_forward_ms: None,
+                        latency_total_ms: total_start.elapsed().as_millis(),
+                        route_config_hash: state.route_config_hash.clone(),
+                        policy_set_hash: state.policy_set_hash.clone(),
+                    };
+                    spawn_emit_and_persist(record, state.audit_store.clone());
+                    return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+                }
             }
-            if !state.rate_limiter.allow(tenant_id).await {
-                let record = ExecutionRecord {
-                    execution_id: execution_id.clone(),
-                    execution_started_at,
-                    route_id: route_id.clone(),
-                    tenant_id: Some(tenant_id),
-                    api_key_id: Some(api_key_id),
-                    auth_outcome: Some("rate_limited".to_string()),
-                    upstream_url: Some(route.upstream.clone()),
-                    method: method.to_string(),
-                    source_ip: source_ip.clone(),
-                    content_type,
-                    user_agent,
-                    had_authorization_header,
-                    request_size_bytes,
-                    request_body_sha256,
-                    verdict: ExecutionVerdict::Rejected,
-                    rejection_reason: Some("rate_limit_exceeded".to_string()),
-                    matched_policy_name: None,
-                    matched_rule_field: None,
-                    matched_rule_condition: None,
-                    matched_rule_severity: None,
-                    violation_value_hash: None,
-                    violation_value_preview: None,
-                    upstream_status: None,
-                    forward_error: None,
-                    latency_inspect_us: 0,
-                    latency_forward_ms: None,
-                    latency_total_ms: total_start.elapsed().as_millis(),
-                    route_config_hash: state.route_config_hash.clone(),
-                    policy_set_hash: state.policy_set_hash.clone(),
-                };
-                spawn_emit_and_persist(record, state.audit_store.clone());
-                return (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Rate limit exceeded",
-                )
-                    .into_response();
-            }
-            (Some(tenant_id), Some(api_key_id), None)
-        }
-        Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
-        Err(auth_failure) => {
-            let auth_outcome_str = auth_failure.as_str().to_string();
-            let record = ExecutionRecord {
-                execution_id: execution_id.clone(),
-                execution_started_at,
-                route_id: route_id.clone(),
-                tenant_id: None,
-                api_key_id: None,
-                auth_outcome: Some(auth_outcome_str.clone()),
-                upstream_url: Some(route.upstream.clone()),
-                method: method.to_string(),
-                source_ip: source_ip.clone(),
-                content_type,
-                user_agent,
-                had_authorization_header,
-                request_size_bytes,
-                request_body_sha256,
-                verdict: ExecutionVerdict::Rejected,
-                rejection_reason: Some(auth_outcome_str),
-                matched_policy_name: None,
-                matched_rule_field: None,
-                matched_rule_condition: None,
-                matched_rule_severity: None,
-                violation_value_hash: None,
-                violation_value_preview: None,
-                upstream_status: None,
-                forward_error: None,
-                latency_inspect_us: 0,
-                latency_forward_ms: None,
-                latency_total_ms: total_start.elapsed().as_millis(),
-                route_config_hash: state.route_config_hash.clone(),
-                policy_set_hash: state.policy_set_hash.clone(),
-            };
-            spawn_emit_and_persist(record, state.audit_store.clone());
-            return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
-        }
-    };
+        };
 
     // 3. Method check
     let method_str = method.to_string();
