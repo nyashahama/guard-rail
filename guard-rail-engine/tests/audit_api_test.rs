@@ -333,6 +333,34 @@ async fn test_insert_execution_and_fetch_it_back() {
 }
 
 #[tokio::test]
+async fn test_stage3_migration_creates_tenant_tables() {
+    let database_url =
+        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        r#"
+        select table_name
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name in ('tenants', 'api_keys', 'tenant_routes')
+        order by table_name
+        "#,
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(tables, vec!["api_keys", "tenant_routes", "tenants"]);
+}
+
+#[tokio::test]
 async fn test_audit_list_returns_newest_first() {
     let app = build_test_router_with_seeded_audit_rows().await;
 
