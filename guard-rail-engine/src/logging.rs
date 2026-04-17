@@ -97,6 +97,47 @@ impl ExecutionLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::{Layer, Registry};
+
+    #[derive(Default)]
+    struct FieldCollector {
+        fields: BTreeMap<String, String>,
+    }
+
+    impl Visit for FieldCollector {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.fields
+                .insert(field.name().to_string(), format!("{value:?}"));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.fields
+                .insert(field.name().to_string(), value.to_string());
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct CaptureLayer {
+        events: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
+    }
+
+    impl<S> Layer<S> for CaptureLayer
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let mut collector = FieldCollector::default();
+            event.record(&mut collector);
+            self.events
+                .lock()
+                .expect("capture layer poisoned")
+                .push(collector.fields);
+        }
+    }
 
     #[test]
     fn test_execution_log_serializes_to_json() {
@@ -220,9 +261,36 @@ mod tests {
             policy_set_hash: "policy-hash".to_string(),
         };
 
-        let log = ExecutionLog::from(&record);
-        let json = serde_json::to_string(&log).unwrap();
-        assert!(json.contains("\"execution_id\":\"GR-EXE-555\""));
-        assert!(json.contains("\"route_id\":\"route-a\""));
+        let capture = CaptureLayer::default();
+        let events = capture.events.clone();
+        let subscriber = Registry::default().with(capture);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let log = ExecutionLog::from(&record);
+            log.emit();
+        });
+
+        let events = events.lock().expect("capture layer poisoned");
+        assert_eq!(events.len(), 1);
+
+        let event = &events[0];
+        assert_eq!(event.get("execution_id"), Some(&"GR-EXE-555".to_string()));
+        assert_eq!(event.get("route_id"), Some(&"route-a".to_string()));
+        assert_eq!(event.get("method"), Some(&"POST".to_string()));
+        assert_eq!(event.get("source_ip"), Some(&"127.0.0.1".to_string()));
+        assert_eq!(event.get("verdict"), Some(&"ALLOWED".to_string()));
+        assert!(
+            event
+                .get("payload")
+                .expect("payload field present")
+                .contains("\"execution_id\":\"GR-EXE-555\"")
+        );
+        assert!(
+            event
+                .get("payload")
+                .expect("payload field present")
+                .contains("\"route_id\":\"route-a\"")
+        );
+        assert_eq!(event.get("message"), Some(&"execution log".to_string()));
     }
 }
