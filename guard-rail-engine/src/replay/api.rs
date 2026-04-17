@@ -15,9 +15,10 @@ pub async fn create_replay(
 ) -> Result<Json<ReplayResult>, StatusCode> {
     authorize_replay(&state, &access, &execution_id).await?;
 
-    let result = crate::replay::engine::replay_execution(&state, &execution_id, request.policy_source)
-        .await
-        .map_err(map_replay_error)?;
+    let result =
+        crate::replay::engine::replay_execution(&state, &execution_id, request.policy_source)
+            .await
+            .map_err(map_replay_error)?;
     Ok(Json(result))
 }
 

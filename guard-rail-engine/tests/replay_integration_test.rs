@@ -28,30 +28,34 @@ async fn start_stage4_test_app() -> TestHarness {
 
     let store = PostgresAuditStore::new(pool, std::time::Duration::from_millis(250));
 
-    let routes = Arc::new(RwLock::new(guard_rail_engine::routes::RouteTable::from_routes(vec![
-        guard_rail_engine::routes::Route {
-            id: "test-route".into(),
-            path: "/v1/execute/test-route".into(),
-            upstream: "http://127.0.0.1:19999".into(),
-            methods: vec!["POST".into()],
-            policies: vec!["block-callbacks".into()],
-            timeout_ms: 5000,
-        },
-        guard_rail_engine::routes::Route {
-            id: "open-route".into(),
-            path: "/v1/execute/open-route".into(),
-            upstream: "http://127.0.0.1:19999".into(),
-            methods: vec!["POST".into()],
-            policies: vec![],
-            timeout_ms: 5000,
+    let routes = Arc::new(RwLock::new(
+        guard_rail_engine::routes::RouteTable::from_routes(vec![
+            guard_rail_engine::routes::Route {
+                id: "test-route".into(),
+                path: "/v1/execute/test-route".into(),
+                upstream: "http://127.0.0.1:19999".into(),
+                methods: vec!["POST".into()],
+                policies: vec!["block-callbacks".into()],
+                timeout_ms: 5000,
+            },
+            guard_rail_engine::routes::Route {
+                id: "open-route".into(),
+                path: "/v1/execute/open-route".into(),
+                upstream: "http://127.0.0.1:19999".into(),
+                methods: vec!["POST".into()],
+                policies: vec![],
+                timeout_ms: 5000,
+            },
+        ]),
+    ));
+
+    let policies = Arc::new(RwLock::new(PolicySet::from_policies(vec![
+        guard_rail_engine::policy::Policy {
+            name: "block-callbacks".into(),
+            description: "Block callback URLs".into(),
+            rules: vec![],
         },
     ])));
-
-    let policies = Arc::new(RwLock::new(PolicySet::from_policies(vec![guard_rail_engine::policy::Policy {
-        name: "block-callbacks".into(),
-        description: "Block callback URLs".into(),
-        rules: vec![],
-    }])));
 
     let state = AppState {
         routes,
@@ -77,23 +81,16 @@ async fn start_stage4_test_app() -> TestHarness {
         },
     };
 
-    let app = guard_rail_engine::proxy::build_router(
-        state,
-        "test-admin".into(),
-        1_048_576,
-    );
+    let app = guard_rail_engine::proxy::build_router(state, "test-admin".into(), 1_048_576);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let base_url = format!("http://{}", addr);
 
     tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service(),
-        )
-        .await
-        .unwrap();
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -168,8 +165,7 @@ fn test_snapshot_builder_uses_only_route_referenced_policies() {
 
 #[tokio::test]
 async fn test_stage4_migration_creates_replay_tables() {
-    let database_url =
-        std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -212,12 +208,27 @@ async fn test_blocked_execution_persists_request_artifacts_without_response_arti
         .unwrap();
 
     assert_eq!(response.status(), 403);
-    let execution_id = response.headers()["x-guardrail-execution-id"].to_str().unwrap();
+    let execution_id = response.headers()["x-guardrail-execution-id"]
+        .to_str()
+        .unwrap();
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let artifact = harness.store.get_execution_artifacts(execution_id).await.unwrap().unwrap();
+    let artifact = harness
+        .store
+        .get_execution_artifacts(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(artifact.response_status, None);
-    assert_eq!(artifact.request_headers.get("x-request-id").unwrap().as_str().unwrap(), "req-123");
+    assert_eq!(
+        artifact
+            .request_headers
+            .get("x-request-id")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        "req-123"
+    );
 }
 
 #[tokio::test]
@@ -234,10 +245,17 @@ async fn test_allowed_execution_persists_response_artifacts_and_strips_authoriza
         .unwrap();
 
     assert_eq!(response.status(), 200);
-    let execution_id = response.headers()["x-guardrail-execution-id"].to_str().unwrap();
+    let execution_id = response.headers()["x-guardrail-execution-id"]
+        .to_str()
+        .unwrap();
 
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    let artifact = harness.store.get_execution_artifacts(execution_id).await.unwrap().unwrap();
+    let artifact = harness
+        .store
+        .get_execution_artifacts(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(artifact.response_status, Some(200));
     assert!(artifact.response_body.as_deref().unwrap().contains("ok"));
     assert!(artifact.request_headers.get("authorization").is_none());

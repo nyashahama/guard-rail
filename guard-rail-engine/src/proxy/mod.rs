@@ -1,15 +1,15 @@
 pub mod forward;
 pub mod response;
 
-use crate::config::ReplayConfig;
-use crate::replay::snapshot;
 use crate::audit::hash::{hash_body, hash_string};
 use crate::auth::context::{RequestAuthContext, authenticate_tenant_request};
 use crate::auth::rate_limit::TenantRateLimiter;
+use crate::config::ReplayConfig;
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
+use crate::replay::snapshot;
 use crate::routes::RouteTable;
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
@@ -109,7 +109,10 @@ fn spawn_emit_and_persist_bundle(
     log.emit();
     if let Some(store) = audit_store {
         tokio::spawn(async move {
-            if let Err(e) = store.insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref()).await {
+            if let Err(e) = store
+                .insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref())
+                .await
+            {
                 eprintln!("Failed to persist execution bundle: {}", e);
             }
         });
@@ -469,18 +472,19 @@ pub async fn handle_execute(
                 policy_set_hash: state.policy_set_hash.clone(),
             };
 
-if state.replay.enabled {
+            if state.replay.enabled {
                 let response_body_bytes = result.body_bytes;
                 let response_body_str = String::from_utf8_lossy(&response_body_bytes).to_string();
                 let max_len = state.replay.max_response_body_bytes;
-                let (response_body, response_body_sha256, truncated) = if response_body_str.len() > max_len {
-                    let truncated_body = response_body_str[..max_len].to_string();
-                    let sha = Some(hash_string(&truncated_body));
-                    (truncated_body, sha, true)
-                } else {
-                    let sha = Some(hash_string(&response_body_str));
-                    (response_body_str.clone(), sha, false)
-                };
+                let (response_body, response_body_sha256, truncated) =
+                    if response_body_str.len() > max_len {
+                        let truncated_body = response_body_str[..max_len].to_string();
+                        let sha = Some(hash_string(&truncated_body));
+                        (truncated_body, sha, true)
+                    } else {
+                        let sha = Some(hash_string(&response_body_str));
+                        (response_body_str.clone(), sha, false)
+                    };
 
                 let response_headers = snapshot::filter_headers(
                     result.response.headers(),

@@ -72,7 +72,11 @@ pub async fn forward_request(
         .map_err(|e| format!("Failed to build response: {}", e))?
         .into_response();
 
-    Ok(ForwardResult { status, response, body_bytes: resp_body })
+    Ok(ForwardResult {
+        status,
+        response,
+        body_bytes: resp_body,
+    })
 }
 
 fn reqwest_headers(axum_headers: &HeaderMap) -> reqwest::header::HeaderMap {

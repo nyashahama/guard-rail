@@ -52,10 +52,7 @@ pub async fn replay_execution(
     execution_id: &str,
     policy_source: ReplayPolicySource,
 ) -> Result<ReplayResult, ReplayError> {
-    let store = state
-        .audit_store
-        .as_ref()
-        .ok_or(ReplayError::Unavailable)?;
+    let store = state.audit_store.as_ref().ok_or(ReplayError::Unavailable)?;
 
     let original = store
         .get_execution_by_id(execution_id)
@@ -72,9 +69,7 @@ pub async fn replay_execution(
     let original_rule_field = original.matched_rule_field.clone();
 
     let replay_verdict = match policy_source {
-        ReplayPolicySource::Snapshot => {
-            evaluate_snapshot(&artifacts)?
-        }
+        ReplayPolicySource::Snapshot => evaluate_snapshot(&artifacts)?,
         ReplayPolicySource::Current => {
             evaluate_current(state, &original.route_id, &artifacts).await?
         }
@@ -82,9 +77,7 @@ pub async fn replay_execution(
 
     let replay_verdict_str = match &replay_verdict {
         Verdict::Allow => "ALLOWED".to_string(),
-        Verdict::Block { .. } => {
-            "BLOCKED".to_string()
-        }
+        Verdict::Block { .. } => "BLOCKED".to_string(),
     };
 
     let replay_policy_name = match &replay_verdict {
@@ -132,9 +125,7 @@ pub async fn replay_execution(
     Ok(result)
 }
 
-fn evaluate_snapshot(
-    artifacts: &ExecutionArtifactRow,
-) -> Result<Verdict, ReplayError> {
+fn evaluate_snapshot(artifacts: &ExecutionArtifactRow) -> Result<Verdict, ReplayError> {
     let policies_value = &artifacts.policies_definition;
     let policies: Vec<crate::policy::Policy> = serde_json::from_value(policies_value.clone())
         .map_err(|e| ReplayError::PolicyNotFound(format!("invalid snapshot policies: {e}")))?;
@@ -162,9 +153,10 @@ async fn evaluate_current(
     artifacts: &ExecutionArtifactRow,
 ) -> Result<Verdict, ReplayError> {
     let routes = state.routes.read().await;
-    let route = routes.lookup(route_id).cloned().ok_or_else(|| {
-        ReplayError::PolicyNotFound(format!("route {} not found", route_id))
-    })?;
+    let route = routes
+        .lookup(route_id)
+        .cloned()
+        .ok_or_else(|| ReplayError::PolicyNotFound(format!("route {} not found", route_id)))?;
     drop(routes);
 
     let policies = state.policies.read().await;

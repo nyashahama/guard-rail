@@ -239,7 +239,9 @@ impl PostgresAuditStore {
                 upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
                 forward_error: r.get("forward_error"),
                 latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
-                latency_forward_ms: r.get::<Option<i64>, _>("latency_forward_ms").map(|v| v as u128),
+                latency_forward_ms: r
+                    .get::<Option<i64>, _>("latency_forward_ms")
+                    .map(|v| v as u128),
                 latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
                 route_config_hash: r.get("route_config_hash"),
                 policy_set_hash: r.get("policy_set_hash"),
