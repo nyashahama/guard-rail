@@ -93,9 +93,15 @@ policies:
         audit_store: None,
         route_config_hash: guard_rail_engine::audit::hash::hash_string("test"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("test"),
-        admin_token: None,
-        tenant_repo: None,
-        tenant_cache: None,
+        admin_token: "test-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy("postgres://localhost:5432")
+                .unwrap(),
+        ),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
     };
 
     let app = Router::new()
@@ -121,6 +127,10 @@ policies:
 }
 
 async fn build_test_router_without_audit_store() -> axum::Router {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy("postgres://localhost:5432")
+        .unwrap();
     let state = guard_rail_engine::proxy::AppState {
         routes: Arc::new(RwLock::new(
             guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
@@ -138,9 +148,10 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         audit_store: None,
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
-        admin_token: None,
-        tenant_repo: None,
-        tenant_cache: None,
+        admin_token: "stage2-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(pool),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
     };
 
     guard_rail_engine::proxy::build_router(state, "stage2-admin-token".to_string(), 1_048_576)
