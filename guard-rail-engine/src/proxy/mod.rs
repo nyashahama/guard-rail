@@ -635,12 +635,24 @@ pub fn build_router(
             crate::auth::middleware::require_admin_token,
         ));
 
+    let replay_routes = axum::Router::new()
+        .route(
+            "/v1/replay/executions/{execution_id}",
+            axum::routing::post(crate::replay::api::create_replay)
+                .get(crate::replay::api::get_replay_summary),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::require_audit_access,
+        ));
+
     let main_router = axum::Router::new()
         .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .merge(audit_routes)
         .merge(audit_admin_routes)
         .merge(admin_routes)
+        .merge(replay_routes)
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             request_body_limit_bytes,
         ));

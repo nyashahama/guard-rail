@@ -398,11 +398,13 @@ impl PostgresAuditStore {
         let row = sqlx::query(
             r#"
             select
-                execution_id, snapshot_hash, request_body_json, request_headers,
-                response_status, response_headers, response_body,
-                response_body_sha256, response_body_truncated, created_at
-            from execution_artifacts
-            where execution_id = $1
+                ea.execution_id, ea.snapshot_hash, ea.request_body_json, ea.request_headers,
+                ea.response_status, ea.response_headers, ea.response_body,
+                ea.response_body_sha256, ea.response_body_truncated, ea.created_at,
+                ps.route_definition, ps.policies_definition
+            from execution_artifacts ea
+            join policy_snapshots ps on ps.snapshot_hash = ea.snapshot_hash
+            where ea.execution_id = $1
             "#,
         )
         .bind(execution_id)
@@ -420,7 +422,54 @@ impl PostgresAuditStore {
             response_body_sha256: r.get("response_body_sha256"),
             response_body_truncated: r.get("response_body_truncated"),
             created_at: r.get("created_at"),
+            route_definition: r.get("route_definition"),
+            policies_definition: r.get("policies_definition"),
         }))
+    }
+
+    pub async fn insert_replay_run(
+        &self,
+        id: &str,
+        execution_id: &str,
+        policy_source: &str,
+        evaluated_snapshot_hash: &str,
+        original_verdict: &str,
+        replay_verdict: &str,
+        original_policy_name: Option<&str>,
+        replay_policy_name: Option<&str>,
+        original_rule_field: Option<&str>,
+        replay_rule_field: Option<&str>,
+        verdict_changed: bool,
+    ) -> Result<(), sqlx::Error> {
+        tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                insert into replay_runs (
+                    id, execution_id, policy_source, evaluated_snapshot_hash,
+                    original_verdict, replay_verdict, original_policy_name,
+                    replay_policy_name, original_rule_field, replay_rule_field,
+                    verdict_changed
+                ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                "#,
+            )
+            .bind(id)
+            .bind(execution_id)
+            .bind(policy_source)
+            .bind(evaluated_snapshot_hash)
+            .bind(original_verdict)
+            .bind(replay_verdict)
+            .bind(original_policy_name)
+            .bind(replay_policy_name)
+            .bind(original_rule_field)
+            .bind(replay_rule_field)
+            .bind(verdict_changed)
+            .execute(&self.pool),
+        )
+        .await
+        .map_err(|_| sqlx::Error::Protocol("replay run insert timed out".into()))??;
+
+        Ok(())
     }
 
     pub async fn verify_integrity(
@@ -520,4 +569,6 @@ pub struct ExecutionArtifactRow {
     pub response_body_sha256: Option<String>,
     pub response_body_truncated: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub route_definition: serde_json::Value,
+    pub policies_definition: serde_json::Value,
 }
