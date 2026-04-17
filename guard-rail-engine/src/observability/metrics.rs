@@ -1,18 +1,25 @@
+use crate::config::ObservabilityConfig;
+use axum::Router;
+use axum::body::Body;
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::Response;
+use axum::routing::get;
 use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts, Registry,
     TextEncoder,
 };
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 pub struct Metrics {
     registry: Registry,
     requests_total: IntCounterVec,
     request_latency_seconds: HistogramVec,
-    upstream_failures_total: IntCounter,
-    audit_persist_failures_total: IntCounter,
-    replay_persist_failures_total: IntCounter,
     inflight_requests: IntGauge,
     readiness: IntGauge,
-    shutdown_transitions_total: IntCounter,
 }
 
 pub struct InflightGuard {
@@ -102,12 +109,8 @@ impl Metrics {
             registry,
             requests_total,
             request_latency_seconds,
-            upstream_failures_total,
-            audit_persist_failures_total,
-            replay_persist_failures_total,
             inflight_requests,
             readiness,
-            shutdown_transitions_total,
         }
     }
 
@@ -130,6 +133,10 @@ impl Metrics {
         self.readiness.set(if ready { 1 } else { 0 });
     }
 
+    pub fn is_ready(&self) -> bool {
+        self.readiness.get() > 0
+    }
+
     pub fn inflight_guard(&self) -> InflightGuard {
         self.inflight_requests.inc();
         InflightGuard {
@@ -144,31 +151,105 @@ impl Metrics {
         encoder.encode(&metric_families, &mut buffer)?;
         Ok(String::from_utf8(buffer)?)
     }
+}
 
-    #[allow(dead_code)]
-    pub fn record_upstream_failure(&self) {
-        self.upstream_failures_total.inc();
-    }
+pub fn attach<S>(
+    router: Router<S>,
+    config: &ObservabilityConfig,
+    metrics: Arc<Metrics>,
+    ready: Arc<AtomicBool>,
+) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let router = router.route(
+        "/ready",
+        get({
+            let ready = Arc::clone(&ready);
+            move || async move {
+                if ready.load(Ordering::Acquire) {
+                    (StatusCode::OK, "ready")
+                } else {
+                    (StatusCode::SERVICE_UNAVAILABLE, "not ready")
+                }
+            }
+        }),
+    );
 
-    #[allow(dead_code)]
-    pub fn record_audit_persist_failure(&self) {
-        self.audit_persist_failures_total.inc();
-    }
+    let router = if config.metrics_enabled {
+        router.route(
+            &config.metrics_path,
+            get({
+                let metrics = Arc::clone(&metrics);
+                move || {
+                    let metrics = Arc::clone(&metrics);
+                    async move {
+                        match metrics.render() {
+                            Ok(snapshot) => (StatusCode::OK, snapshot),
+                            Err(err) => (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("metrics render error: {err}"),
+                            ),
+                        }
+                    }
+                }
+            }),
+        )
+    } else {
+        router
+    };
 
-    #[allow(dead_code)]
-    pub fn record_replay_persist_failure(&self) {
-        self.replay_persist_failures_total.inc();
-    }
+    router.layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&metrics),
+        record_request_metrics,
+    ))
+}
 
-    #[allow(dead_code)]
-    pub fn record_shutdown_transition(&self) {
-        self.shutdown_transitions_total.inc();
+pub async fn record_request_metrics(
+    State(metrics): State<Arc<Metrics>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let _inflight = metrics.inflight_guard();
+    let started = Instant::now();
+    let method = request.method().as_str().to_string();
+    let route_id = route_id_from_path(request.uri().path());
+    let response = next.run(request).await;
+    let verdict = verdict_from_status(response.status());
+    metrics.record_execution(
+        &route_id,
+        &method,
+        &verdict,
+        started.elapsed().as_secs_f64(),
+    );
+    response
+}
+
+fn verdict_from_status(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::OK | StatusCode::CREATED | StatusCode::ACCEPTED | StatusCode::NO_CONTENT => {
+            "ALLOWED"
+        }
+        StatusCode::FORBIDDEN => "BLOCKED",
+        _ => "REJECTED",
     }
+}
+
+fn route_id_from_path(path: &str) -> String {
+    path.strip_prefix("/v1/execute/")
+        .filter(|value| !value.is_empty())
+        .unwrap_or(path.trim_start_matches('/'))
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Metrics;
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::http::Request as HttpRequest;
+    use axum::routing::post;
+    use std::sync::atomic::AtomicBool;
+    use tower::ServiceExt;
 
     #[test]
     fn test_metrics_snapshot_contains_request_and_readiness_series() {
@@ -180,5 +261,86 @@ mod tests {
         assert!(snapshot.contains("guardrail_requests_total"));
         assert!(snapshot.contains("route_id=\"test-route\""));
         assert!(snapshot.contains("guardrail_readiness 1"));
+    }
+
+    #[tokio::test]
+    async fn test_attach_exposes_metrics_and_records_requests() {
+        let metrics = Arc::new(Metrics::new());
+        let ready = Arc::new(AtomicBool::new(true));
+        let config = ObservabilityConfig {
+            service_name: "guard-rail-engine".to_string(),
+            metrics_enabled: true,
+            metrics_path: "/metrics".to_string(),
+            trace_header_name: "traceparent".to_string(),
+            readiness_probe_timeout_ms: 250,
+        };
+
+        let app = attach(
+            Router::new().route("/v1/execute/{route_id}", post(|| async { "ok" })),
+            &config,
+            Arc::clone(&metrics),
+            Arc::clone(&ready),
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("POST")
+                    .uri("/v1/execute/widget")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let ready_response = app
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("GET")
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ready_response.status(), StatusCode::OK);
+
+        let metrics_response = app
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("GET")
+                    .uri("/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(metrics_response.status(), StatusCode::OK);
+        let body = to_bytes(metrics_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot = String::from_utf8(body.to_vec()).unwrap();
+        assert!(snapshot.contains("guardrail_requests_total"));
+        assert!(snapshot.contains("route_id=\"widget\""));
+        assert!(snapshot.contains("verdict=\"ALLOWED\""));
+        assert!(!snapshot.contains("verdict=\"200\""));
+
+        ready.store(false, Ordering::Release);
+        let ready_response = app
+            .clone()
+            .oneshot(
+                HttpRequest::builder()
+                    .method("GET")
+                    .uri("/ready")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ready_response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }

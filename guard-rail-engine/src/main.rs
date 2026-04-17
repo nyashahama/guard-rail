@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod execution;
 mod logging;
+mod observability;
 mod policy;
 mod proxy;
 mod reload;
@@ -18,11 +19,11 @@ use reqwest::Client;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tenant::cache::{TenantAuthCache, validate_all_routes_bound};
 use tenant::repository::TenantRepository;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Clone, clap::Subcommand, Default)]
 enum Command {
@@ -45,6 +46,7 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let app_config = config::AppConfig::load(&cli.config)?;
+    observability::tracing::init(&app_config.logging, &app_config.observability)?;
 
     let command = cli.command.unwrap_or_default();
 
@@ -60,21 +62,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool = storage::postgres::connect_pool(&app_config.database).await?;
     storage::postgres::assert_schema_ready(&pool).await?;
-
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&app_config.logging.level));
-
-    if app_config.logging.format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .pretty()
-            .init();
-    }
 
     tracing::info!("Loading routes from {}", app_config.routes_file);
     let route_table = routes::RouteTable::load(&PathBuf::from(&app_config.routes_file))?;
@@ -160,10 +147,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replay: app_config.replay.clone(),
     };
 
-    let app = proxy::build_router(
-        state,
-        app_config.admin.token.clone(),
-        app_config.server.request_body_limit_bytes,
+    let metrics = Arc::new(observability::metrics::Metrics::new());
+    let ready = Arc::new(AtomicBool::new(false));
+
+    let app = observability::metrics::attach(
+        proxy::build_router(
+            state,
+            app_config.admin.token.clone(),
+            app_config.server.request_body_limit_bytes,
+        ),
+        &app_config.observability,
+        Arc::clone(&metrics),
+        Arc::clone(&ready),
     );
 
     let addr: SocketAddr =
@@ -172,11 +167,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Guard Rail Engine starting on {}", addr);
 
     let listener = TcpListener::bind(addr).await?;
-    axum::serve(
+    ready.store(true, Ordering::Release);
+    metrics.set_readiness(true);
+    let serve_result = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await?;
+    .await;
+
+    ready.store(false, Ordering::Release);
+    metrics.set_readiness(false);
+    serve_result?;
 
     Ok(())
 }
