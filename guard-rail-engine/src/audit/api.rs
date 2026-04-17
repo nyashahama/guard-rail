@@ -43,6 +43,15 @@ pub struct IntegrityResponse {
     pub checked_to: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct ExecutionAuditDetail {
+    #[serde(flatten)]
+    pub row: ExecutionAuditRow,
+    pub replay_available: bool,
+    pub snapshot_hash: Option<String>,
+    pub latest_replay_run_id: Option<uuid::Uuid>,
+}
+
 pub async fn list_executions(
     State(state): State<crate::proxy::AppState>,
     Extension(access): Extension<AuditAccess>,
@@ -63,22 +72,23 @@ pub async fn get_execution(
     State(state): State<crate::proxy::AppState>,
     Extension(access): Extension<AuditAccess>,
     Path(execution_id): Path<String>,
-) -> Result<Json<ExecutionAuditRow>, StatusCode> {
+) -> Result<Json<ExecutionAuditDetail>, StatusCode> {
     let store = state
         .audit_store
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let row = store
-        .get_execution_by_id(&execution_id)
+
+    let detail = store
+        .get_execution_detail(&execution_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match access {
-        AuditAccess::Admin => Ok(Json(row)),
+        AuditAccess::Admin => Ok(Json(detail)),
         AuditAccess::Tenant { tenant_id } => {
-            if row.tenant_id == Some(tenant_id) {
-                Ok(Json(row))
+            if detail.row.tenant_id == Some(tenant_id) {
+                Ok(Json(detail))
             } else {
                 Err(StatusCode::NOT_FOUND)
             }

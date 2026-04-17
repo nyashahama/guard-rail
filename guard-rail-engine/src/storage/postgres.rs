@@ -179,6 +179,79 @@ impl PostgresAuditStore {
         }))
     }
 
+    pub async fn get_execution_detail(
+        &self,
+        execution_id: &str,
+    ) -> Result<Option<crate::audit::api::ExecutionAuditDetail>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            select
+                ea.execution_id, ea.execution_started_at, ea.route_id, ea.tenant_id, ea.api_key_id, ea.auth_outcome,
+                ea.upstream_url, ea.method, ea.source_ip, ea.content_type, ea.user_agent,
+                ea.had_authorization_header, ea.request_size_bytes, ea.request_body_sha256,
+                ea.verdict, ea.rejection_reason, ea.matched_policy_name, ea.matched_rule_field,
+                ea.matched_rule_condition, ea.matched_rule_severity, ea.violation_value_hash,
+                ea.violation_value_preview, ea.upstream_status, ea.forward_error,
+                ea.latency_inspect_us, ea.latency_forward_ms, ea.latency_total_ms,
+                ea.route_config_hash, ea.policy_set_hash, ea.previous_hash, ea.record_hash,
+                art.snapshot_hash,
+                exists(select 1 from execution_artifacts where execution_id = ea.execution_id) as replay_available,
+                (
+                    select rr.id
+                    from replay_runs rr
+                    where rr.execution_id = ea.execution_id
+                    order by rr.created_at desc
+                    limit 1
+                ) as latest_replay_run_id
+            from execution_audit ea
+            left join execution_artifacts art on art.execution_id = ea.execution_id
+            where ea.execution_id = $1
+            "#,
+        )
+        .bind(execution_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| crate::audit::api::ExecutionAuditDetail {
+            row: ExecutionAuditRow {
+                execution_id: r.get("execution_id"),
+                execution_started_at: r.get("execution_started_at"),
+                route_id: r.get("route_id"),
+                tenant_id: r.get("tenant_id"),
+                api_key_id: r.get("api_key_id"),
+                auth_outcome: r.get("auth_outcome"),
+                upstream_url: r.get("upstream_url"),
+                method: r.get("method"),
+                source_ip: r.get("source_ip"),
+                content_type: r.get("content_type"),
+                user_agent: r.get("user_agent"),
+                had_authorization_header: r.get("had_authorization_header"),
+                request_size_bytes: r.get::<i64, _>("request_size_bytes") as usize,
+                request_body_sha256: r.get("request_body_sha256"),
+                verdict: r.get("verdict"),
+                rejection_reason: r.get("rejection_reason"),
+                matched_policy_name: r.get("matched_policy_name"),
+                matched_rule_field: r.get("matched_rule_field"),
+                matched_rule_condition: r.get("matched_rule_condition"),
+                matched_rule_severity: r.get("matched_rule_severity"),
+                violation_value_hash: r.get("violation_value_hash"),
+                violation_value_preview: r.get("violation_value_preview"),
+                upstream_status: r.get::<Option<i32>, _>("upstream_status").map(|v| v as u16),
+                forward_error: r.get("forward_error"),
+                latency_inspect_us: r.get::<i64, _>("latency_inspect_us") as u128,
+                latency_forward_ms: r.get::<Option<i64>, _>("latency_forward_ms").map(|v| v as u128),
+                latency_total_ms: r.get::<i64, _>("latency_total_ms") as u128,
+                route_config_hash: r.get("route_config_hash"),
+                policy_set_hash: r.get("policy_set_hash"),
+                previous_hash: r.get("previous_hash"),
+                record_hash: r.get("record_hash"),
+            },
+            replay_available: r.get("replay_available"),
+            snapshot_hash: r.get("snapshot_hash"),
+            latest_replay_run_id: r.get("latest_replay_run_id"),
+        }))
+    }
+
     pub async fn count_executions(&self) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("select count(*) from execution_audit")
             .fetch_one(&self.pool)

@@ -13,7 +13,7 @@ pub async fn create_replay(
     Path(execution_id): Path<String>,
     Json(request): Json<ReplayRequest>,
 ) -> Result<Json<ReplayResult>, StatusCode> {
-    authorize_replay(&state, &access, &execution_id)?;
+    authorize_replay(&state, &access, &execution_id).await?;
 
     let result = crate::replay::engine::replay_execution(&state, &execution_id, request.policy_source)
         .await
@@ -26,12 +26,12 @@ pub async fn get_replay_summary(
     Extension(access): Extension<AuditAccess>,
     Path(execution_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    authorize_replay(&state, &access, &execution_id).await?;
+
     let store = state
         .audit_store
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    let _ = authorize_replay(&state, &access, &execution_id)?;
 
     let artifacts = store
         .get_execution_artifacts(&execution_id)
@@ -46,7 +46,7 @@ pub async fn get_replay_summary(
     })))
 }
 
-fn authorize_replay(
+async fn authorize_replay(
     state: &crate::proxy::AppState,
     access: &AuditAccess,
     execution_id: &str,
@@ -59,16 +59,13 @@ fn authorize_replay(
     match access {
         AuditAccess::Admin => Ok(()),
         AuditAccess::Tenant { tenant_id } => {
-            let tenant_id = *tenant_id;
-            let execution = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    store.get_execution_by_id(execution_id).await
-                })
-            })
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            .ok_or(StatusCode::NOT_FOUND)?;
+            let execution = store
+                .get_execution_by_id(execution_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::NOT_FOUND)?;
 
-            if execution.tenant_id == Some(tenant_id) {
+            if execution.tenant_id == Some(*tenant_id) {
                 Ok(())
             } else {
                 Err(StatusCode::NOT_FOUND)
