@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub admin: AdminConfig,
     pub tenant_auth: TenantAuthConfig,
     pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub replay: ReplayConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -112,6 +114,38 @@ fn default_burst() -> u32 {
     30
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ReplayConfig {
+    #[serde(default = "default_replay_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_capture_request_headers")]
+    pub capture_request_headers: Vec<String>,
+    #[serde(default = "default_capture_response_headers")]
+    pub capture_response_headers: Vec<String>,
+    #[serde(default = "default_max_response_body_bytes")]
+    pub max_response_body_bytes: usize,
+}
+
+fn default_replay_enabled() -> bool {
+    true
+}
+
+fn default_capture_request_headers() -> Vec<String> {
+    vec![
+        "content-type".into(),
+        "accept".into(),
+        "x-request-id".into(),
+    ]
+}
+
+fn default_capture_response_headers() -> Vec<String> {
+    vec!["content-type".into(), "x-upstream-version".into()]
+}
+
+fn default_max_response_body_bytes() -> usize {
+    65_536
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
@@ -148,6 +182,9 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_RATE_LIMIT__BURST") {
             config.rate_limit.burst = val.parse()?;
         }
+        if let Ok(val) = std::env::var("GUARDRAIL_REPLAY__ENABLED") {
+            config.replay.enabled = val.parse()?;
+        }
 
         Ok(config)
     }
@@ -170,6 +207,7 @@ mod tests {
             std::env::remove_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME");
             std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
             std::env::remove_var("GUARDRAIL_RATE_LIMIT__BURST");
+            std::env::remove_var("GUARDRAIL_REPLAY__ENABLED");
         }
     }
 
@@ -283,6 +321,40 @@ rate_limit:
         assert_eq!(config.tenant_auth.header_name, "authorization");
         assert_eq!(config.rate_limit.requests_per_minute, 120);
         assert_eq!(config.rate_limit.burst, 30);
+    }
+
+    #[test]
+    fn test_load_config_with_stage4_replay_section() {
+        clear_env_vars();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage2-admin-token"
+tenant_auth: {}
+rate_limit: {}
+replay:
+  enabled: true
+  capture_request_headers: ["content-type", "accept", "x-request-id"]
+  capture_response_headers: ["content-type", "x-upstream-version"]
+  max_response_body_bytes: 65536
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = crate::config::AppConfig::load(tmp.path()).unwrap();
+        assert!(config.replay.enabled);
+        assert_eq!(config.replay.capture_request_headers.len(), 3);
+        assert_eq!(config.replay.max_response_body_bytes, 65536);
     }
 
     #[test]
