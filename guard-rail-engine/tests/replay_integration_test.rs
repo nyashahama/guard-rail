@@ -2,7 +2,7 @@ use guard_rail_engine::config::ReplayConfig;
 use guard_rail_engine::policy::{Policy, PolicySet};
 use guard_rail_engine::proxy::AppState;
 use guard_rail_engine::replay::snapshot::{build_snapshot, build_snapshot_from_set};
-use guard_rail_engine::routes::Route;
+use guard_rail_engine::routes::{Route, RouteAuthMode};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::{Arc, OnceLock};
@@ -92,6 +92,7 @@ async fn start_stage4_test_app() -> TestHarness {
             guard_rail_engine::routes::Route {
                 id: "test-route".into(),
                 path: "/v1/execute/test-route".into(),
+                auth_mode: RouteAuthMode::Public,
                 upstream: format!("{upstream}/blocked"),
                 methods: vec!["POST".into()],
                 policies: vec!["block-callbacks".into()],
@@ -100,6 +101,7 @@ async fn start_stage4_test_app() -> TestHarness {
             guard_rail_engine::routes::Route {
                 id: "open-route".into(),
                 path: "/v1/execute/open-route".into(),
+                auth_mode: RouteAuthMode::Public,
                 upstream: format!("{upstream}/open"),
                 methods: vec!["POST".into()],
                 policies: vec![],
@@ -189,6 +191,7 @@ fn test_snapshot_hash_is_stable_for_equivalent_route_and_policy_state() {
     let route = Route {
         id: "payments".into(),
         path: "/v1/execute/payments".into(),
+        auth_mode: RouteAuthMode::Public,
         upstream: "http://upstream/payments".into(),
         methods: vec!["POST".into()],
         policies: vec!["block-callbacks".into()],
@@ -221,6 +224,7 @@ fn test_snapshot_builder_uses_only_route_referenced_policies() {
     let route = Route {
         id: "payments".into(),
         path: "/v1/execute/payments".into(),
+        auth_mode: RouteAuthMode::Public,
         upstream: "http://upstream/payments".into(),
         methods: vec!["POST".into()],
         policies: vec!["policy-a".into()],

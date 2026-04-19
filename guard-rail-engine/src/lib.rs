@@ -12,3 +12,5 @@ pub mod routes;
 pub mod shutdown;
 pub mod storage;
 pub mod tenant;
+
+pub use routes::RouteAuthMode;

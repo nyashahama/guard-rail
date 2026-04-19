@@ -64,6 +64,7 @@ impl LifecycleState {
     }
 }
 
+#[allow(dead_code)]
 pub async fn shutdown_signal(
     lifecycle: LifecycleState,
     metrics: Option<Arc<crate::observability::metrics::Metrics>>,
@@ -77,7 +78,7 @@ pub async fn shutdown_signal(
     }
 }
 
-async fn wait_for_signal() {
+pub async fn wait_for_signal() {
     #[cfg(unix)]
     {
         let mut terminate =

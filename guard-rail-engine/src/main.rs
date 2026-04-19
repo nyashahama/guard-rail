@@ -20,7 +20,7 @@ use reqwest::Client;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tenant::cache::{TenantAuthCache, validate_all_routes_bound};
+use tenant::cache::{TenantAuthCache, validate_route_auth_state};
 use tenant::repository::TenantRepository;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -80,6 +80,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Arc::new(RwLock::new(route_table));
     let policies = Arc::new(RwLock::new(policy_set));
 
+    let tenant_repo = TenantRepository::new(pool.clone());
+    let auth_snapshot = tenant_repo.load_auth_snapshot().await?;
+
+    validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
+        .map_err(|e| format!("Tenant auth validation failed: {}", e))?;
+
+    let tenant_cache = TenantAuthCache::default();
+    tenant_cache.replace(auth_snapshot).await;
+
     let reload_routes = Arc::clone(&routes);
     let reload_policies = Arc::clone(&policies);
     reload::start_watcher(
@@ -87,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(&app_config.policies_dir),
         reload_routes,
         reload_policies,
+        tenant_cache.clone(),
     )?;
 
     let http_client = Client::builder()
@@ -137,13 +147,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hash_string("")
     };
 
-    let tenant_repo = TenantRepository::new(pool.clone());
-    let tenant_cache = TenantAuthCache::default();
-    let auth_snapshot = tenant_repo.load_auth_snapshot().await?;
-    validate_all_routes_bound(&route_table_for_cache, &auth_snapshot)
-        .map_err(|err| format!("Tenant binding validation failed: {err}"))?;
-    tenant_cache.replace(auth_snapshot).await;
-
     let state = AppState {
         routes,
         policies,
@@ -183,29 +186,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.set_readiness(true);
         metrics.record_shutdown_transition("ready");
     }
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown::shutdown_signal(
-        lifecycle.clone(),
-        metrics.clone(),
-    ));
 
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(app_config.shutdown.grace_period_ms),
-        server,
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
-        Err(_) => {
-            let inflight_requests = metrics
-                .as_ref()
-                .map(|metrics| metrics.inflight_requests())
-                .unwrap_or(0);
-            tracing::warn!(inflight_requests, "grace period expired while draining");
+    let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = drain_rx.await;
+        })
+        .await
+    };
+
+    let grace_period = std::time::Duration::from_millis(app_config.shutdown.grace_period_ms);
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => {
+            if let Err(err) = result {
+                return Err(Box::<dyn std::error::Error>::from(err));
+            }
+        }
+        _ = shutdown::wait_for_signal() => {
+            lifecycle.begin_drain().await;
+            if let Some(metrics) = &metrics {
+                metrics.set_readiness(false);
+                metrics.record_shutdown_transition("draining");
+            }
+            let _ = drain_tx.send(());
+
+            match tokio::time::timeout(grace_period, &mut server).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
+                Err(_) => {
+                    let inflight_requests = metrics
+                        .as_ref()
+                        .map(|metrics| metrics.inflight_requests())
+                        .unwrap_or(0);
+                    tracing::warn!(inflight_requests, "grace period expired while draining");
+                }
+            }
         }
     }
 

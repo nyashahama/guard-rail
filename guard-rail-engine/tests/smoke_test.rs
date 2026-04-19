@@ -61,6 +61,7 @@ async fn start_harness_with_delay(initial_ready: bool, delay_ms: u64) -> SmokeHa
 routes:
   - id: open-route
     path: /v1/execute/open-route
+    auth_mode: public
     upstream: {upstream}/api/open
     methods: [POST]
     policies: []

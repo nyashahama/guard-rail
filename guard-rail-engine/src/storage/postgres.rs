@@ -2,6 +2,19 @@ use sqlx::{PgPool, Row};
 
 pub use sqlx::postgres::PgPoolOptions;
 
+#[derive(Debug)]
+pub enum IntegrityCheckError {
+    #[allow(dead_code)]
+    MissingExecution(String),
+    #[allow(dead_code)]
+    ReversedRange {
+        from_execution_id: String,
+        to_execution_id: String,
+    },
+    #[allow(dead_code)]
+    Storage(sqlx::Error),
+}
+
 pub async fn connect_pool(config: &crate::config::DatabaseConfig) -> Result<PgPool, sqlx::Error> {
     PgPoolOptions::new()
         .max_connections(config.max_connections)
@@ -36,6 +49,8 @@ pub struct PostgresAuditStore {
     write_timeout: std::time::Duration,
 }
 
+const AUDIT_CHAIN_LOCK_KEY: i64 = 0x4752_4149;
+
 impl PostgresAuditStore {
     pub fn new(pool: PgPool, write_timeout: std::time::Duration) -> Self {
         Self {
@@ -55,74 +70,91 @@ impl PostgresAuditStore {
         &self,
         record: &crate::execution::ExecutionRecord,
     ) -> Result<(), sqlx::Error> {
+        let result =
+            tokio::time::timeout(self.write_timeout, self.append_execution_row(record)).await;
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(sqlx::Error::Protocol("audit insert timed out".into())),
+        }
+    }
+
+    async fn append_execution_row(
+        &self,
+        record: &crate::execution::ExecutionRecord,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("select pg_advisory_xact_lock($1)")
+            .bind(AUDIT_CHAIN_LOCK_KEY)
+            .execute(&mut *tx)
+            .await?;
+
         let previous_hash: Option<String> =
             sqlx::query_scalar("select record_hash from execution_audit order by id desc limit 1")
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
 
         let record_hash = crate::audit::hash::record_hash(record, previous_hash.as_deref());
 
-        tokio::time::timeout(
-            self.write_timeout,
-            sqlx::query(
-                r#"
-                insert into execution_audit (
-                    execution_id, execution_started_at, route_id, tenant_id, api_key_id, auth_outcome,
-                    upstream_url, method, source_ip, content_type, user_agent,
-                    had_authorization_header, request_size_bytes, request_body_sha256,
-                    verdict, rejection_reason, matched_policy_name, matched_rule_field,
-                    matched_rule_condition, matched_rule_severity, violation_value_hash,
-                    violation_value_preview, upstream_status, forward_error,
-                    latency_inspect_us, latency_forward_ms, latency_total_ms,
-                    route_config_hash, policy_set_hash, previous_hash, record_hash
-                ) values (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14, $15, $16, $17, $18,
-                    $19, $20, $21, $22, $23, $24,
-                    $25, $26, $27, $28, $29, $30, $31
-                )
-                "#,
+        sqlx::query(
+            r#"
+            insert into execution_audit (
+                execution_id, execution_started_at, route_id, tenant_id, api_key_id, auth_outcome,
+                upstream_url, method, source_ip, content_type, user_agent,
+                had_authorization_header, request_size_bytes, request_body_sha256,
+                verdict, rejection_reason, matched_policy_name, matched_rule_field,
+                matched_rule_condition, matched_rule_severity, violation_value_hash,
+                violation_value_preview, upstream_status, forward_error,
+                latency_inspect_us, latency_forward_ms, latency_total_ms,
+                route_config_hash, policy_set_hash, previous_hash, record_hash
+            ) values (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18,
+                $19, $20, $21, $22, $23, $24,
+                $25, $26, $27, $28, $29, $30, $31
             )
-            .bind(&record.execution_id)
-            .bind(record.execution_started_at)
-            .bind(&record.route_id)
-            .bind(record.tenant_id)
-            .bind(record.api_key_id)
-            .bind(&record.auth_outcome)
-            .bind(&record.upstream_url)
-            .bind(&record.method)
-            .bind(&record.source_ip)
-            .bind(&record.content_type)
-            .bind(&record.user_agent)
-            .bind(record.had_authorization_header)
-            .bind(record.request_size_bytes as i64)
-            .bind(&record.request_body_sha256)
-            .bind(match record.verdict {
-                crate::execution::ExecutionVerdict::Rejected => "REJECTED",
-                crate::execution::ExecutionVerdict::Blocked => "BLOCKED",
-                crate::execution::ExecutionVerdict::Allowed => "ALLOWED",
-            })
-            .bind(&record.rejection_reason)
-            .bind(&record.matched_policy_name)
-            .bind(&record.matched_rule_field)
-            .bind(&record.matched_rule_condition)
-            .bind(&record.matched_rule_severity)
-            .bind(&record.violation_value_hash)
-            .bind(&record.violation_value_preview)
-            .bind(record.upstream_status.map(i32::from))
-            .bind(&record.forward_error)
-            .bind(record.latency_inspect_us as i64)
-            .bind(record.latency_forward_ms.map(|v| v as i64))
-            .bind(record.latency_total_ms as i64)
-            .bind(&record.route_config_hash)
-            .bind(&record.policy_set_hash)
-            .bind(&previous_hash)
-            .bind(record_hash)
-            .execute(&self.pool),
+            "#,
         )
-        .await
-        .map_err(|_| sqlx::Error::Protocol("audit insert timed out".into()))??;
+        .bind(&record.execution_id)
+        .bind(record.execution_started_at)
+        .bind(&record.route_id)
+        .bind(record.tenant_id)
+        .bind(record.api_key_id)
+        .bind(&record.auth_outcome)
+        .bind(&record.upstream_url)
+        .bind(&record.method)
+        .bind(&record.source_ip)
+        .bind(&record.content_type)
+        .bind(&record.user_agent)
+        .bind(record.had_authorization_header)
+        .bind(record.request_size_bytes as i64)
+        .bind(&record.request_body_sha256)
+        .bind(match record.verdict {
+            crate::execution::ExecutionVerdict::Rejected => "REJECTED",
+            crate::execution::ExecutionVerdict::Blocked => "BLOCKED",
+            crate::execution::ExecutionVerdict::Allowed => "ALLOWED",
+        })
+        .bind(&record.rejection_reason)
+        .bind(&record.matched_policy_name)
+        .bind(&record.matched_rule_field)
+        .bind(&record.matched_rule_condition)
+        .bind(&record.matched_rule_severity)
+        .bind(&record.violation_value_hash)
+        .bind(&record.violation_value_preview)
+        .bind(record.upstream_status.map(i32::from))
+        .bind(&record.forward_error)
+        .bind(record.latency_inspect_us as i64)
+        .bind(record.latency_forward_ms.map(|v| v as i64))
+        .bind(record.latency_total_ms as i64)
+        .bind(&record.route_config_hash)
+        .bind(&record.policy_set_hash)
+        .bind(&previous_hash)
+        .bind(record_hash)
+        .execute(&mut *tx)
+        .await?;
 
+        tx.commit().await?;
         Ok(())
     }
 
@@ -549,49 +581,82 @@ impl PostgresAuditStore {
     pub async fn verify_integrity(
         &self,
         query: crate::audit::api::IntegrityQuery,
-    ) -> Result<crate::audit::api::IntegrityResponse, sqlx::Error> {
-        let from_id = query.from_execution_id.clone();
-        let to_id = query.to_execution_id.clone();
+    ) -> Result<crate::audit::api::IntegrityResponse, IntegrityCheckError> {
+        let from_row =
+            sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
+                .bind(&query.from_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?
+                .ok_or_else(|| {
+                    IntegrityCheckError::MissingExecution(query.from_execution_id.clone())
+                })?;
+        let to_row =
+            sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
+                .bind(&query.to_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?
+                .ok_or_else(|| {
+                    IntegrityCheckError::MissingExecution(query.to_execution_id.clone())
+                })?;
 
-        let from_row = self.get_execution_by_id(&from_id).await?;
-        let to_row = self.get_execution_by_id(&to_id).await?;
+        let from_id: i64 = from_row.get("id");
+        let to_id: i64 = to_row.get("id");
+        if from_id > to_id {
+            return Err(IntegrityCheckError::ReversedRange {
+                from_execution_id: query.from_execution_id,
+                to_execution_id: query.to_execution_id,
+            });
+        }
 
-        let mut chain_valid = true;
-        let mut first_invalid_record: Option<String> = None;
+        let predecessor_hash: Option<String> = if from_id > 1 {
+            sqlx::query_scalar("select record_hash from execution_audit where id = $1")
+                .bind(from_id - 1)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?
+        } else {
+            None
+        };
 
-        if let (Some(from), Some(_to)) = (from_row, to_row) {
-            let mut current = Some(from.record_hash.clone());
+        let rows = sqlx::query(
+            r#"
+            select id, execution_id, previous_hash, record_hash
+            from execution_audit
+            where id between $1 and $2
+            order by id asc
+            "#,
+        )
+        .bind(from_id)
+        .bind(to_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(IntegrityCheckError::Storage)?;
 
-            let rows = sqlx::query(
-                r#"
-                select record_hash, previous_hash from execution_audit
-                where execution_id >= $1 and execution_id <= $2
-                order by execution_started_at asc
-                "#,
-            )
-            .bind(&from_id)
-            .bind(&to_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let mut expected_previous = predecessor_hash;
+        for row in rows {
+            let execution_id: String = row.get("execution_id");
+            let previous_hash: Option<String> = row.get("previous_hash");
+            let record_hash: String = row.get("record_hash");
 
-            for row in rows {
-                let record_hash: String = row.get("record_hash");
-                let previous_hash: Option<String> = row.get("previous_hash");
-
-                if previous_hash.as_ref() != current.as_ref() {
-                    chain_valid = false;
-                    first_invalid_record = Some(record_hash);
-                    break;
-                }
-                current = Some(record_hash);
+            if previous_hash != expected_previous {
+                return Ok(crate::audit::api::IntegrityResponse {
+                    chain_valid: false,
+                    first_invalid_record: Some(execution_id),
+                    checked_from: query.from_execution_id.clone(),
+                    checked_to: query.to_execution_id.clone(),
+                });
             }
+
+            expected_previous = Some(record_hash);
         }
 
         Ok(crate::audit::api::IntegrityResponse {
-            chain_valid,
-            first_invalid_record,
-            checked_from: from_id,
-            checked_to: to_id,
+            chain_valid: true,
+            first_invalid_record: None,
+            checked_from: query.from_execution_id,
+            checked_to: query.to_execution_id,
         })
     }
 }

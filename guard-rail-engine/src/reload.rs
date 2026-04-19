@@ -1,5 +1,6 @@
 use crate::policy::PolicySet;
 use crate::routes::RouteTable;
+use crate::tenant::cache::TenantAuthCache;
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,41 +11,90 @@ pub fn start_watcher(
     policies_dir: PathBuf,
     routes: Arc<RwLock<RouteTable>>,
     policies: Arc<RwLock<PolicySet>>,
+    tenant_cache: TenantAuthCache,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Handle::current();
+    let rt_initial = rt.clone();
 
     let routes_path = routes_file.clone();
     let policies_path = policies_dir.clone();
+    let initial_tenant_cache = tenant_cache.clone();
+
+    let callback_routes = Arc::clone(&routes);
+    let callback_policies = Arc::clone(&policies);
+    let callback_tenant_cache = tenant_cache.clone();
+    let callback_routes_path = routes_file.clone();
+    let callback_policies_path = policies_dir.clone();
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
-                        let routes = Arc::clone(&routes);
-                        let policies = Arc::clone(&policies);
-                        let routes_path = routes_path.clone();
-                        let policies_path = policies_path.clone();
+            if let Ok(event) = res
+                && matches!(
+                    event.kind,
+                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                )
+            {
+                let routes = Arc::clone(&callback_routes);
+                let policies = Arc::clone(&callback_policies);
+                let tenant_cache = callback_tenant_cache.clone();
+                let routes_path = callback_routes_path.clone();
+                let policies_path = callback_policies_path.clone();
 
-                        rt.spawn(async move {
-                            reload_all(&routes_path, &policies_path, &routes, &policies).await;
-                        });
-                    }
-                    _ => {}
-                }
+                rt.spawn(async move {
+                    reload_all(
+                        &routes_path,
+                        &policies_path,
+                        &routes,
+                        &policies,
+                        &tenant_cache,
+                    )
+                    .await;
+                });
             }
         })?;
 
     if let Some(parent) = routes_file.parent() {
         watcher.watch(parent, RecursiveMode::NonRecursive)?;
     }
-
     watcher.watch(&policies_dir, RecursiveMode::Recursive)?;
 
-    // Leak the watcher so it lives for the duration of the process
     std::mem::forget(watcher);
 
+    let final_routes = Arc::clone(&routes);
+    let final_policies = Arc::clone(&policies);
+    rt_initial.spawn(async move {
+        reload_all(
+            &routes_path,
+            &policies_path,
+            &final_routes,
+            &final_policies,
+            &initial_tenant_cache,
+        )
+        .await;
+    });
+
     tracing::info!("File watcher started for routes and policies");
+    Ok(())
+}
+
+pub async fn apply_reload_candidate(
+    new_routes: RouteTable,
+    new_policies: PolicySet,
+    routes: &Arc<RwLock<RouteTable>>,
+    policies: &Arc<RwLock<PolicySet>>,
+    tenant_cache: &TenantAuthCache,
+) -> Result<(), String> {
+    let required = new_routes.policy_names();
+    new_policies
+        .validate_references(&required)
+        .map_err(|err| err.to_string())?;
+
+    let snapshot = tenant_cache.snapshot().await;
+    crate::tenant::cache::validate_route_auth_state(&new_routes, &snapshot)
+        .map_err(|err| format!("{err:?}"))?;
+
+    *routes.write().await = new_routes;
+    *policies.write().await = new_policies;
     Ok(())
 }
 
@@ -53,8 +103,8 @@ async fn reload_all(
     policies_path: &Path,
     routes: &Arc<RwLock<RouteTable>>,
     policies: &Arc<RwLock<PolicySet>>,
+    tenant_cache: &TenantAuthCache,
 ) {
-    // Load policies and routes synchronously, extracting results before any .await
     let new_policies = match PolicySet::load_dir(policies_path) {
         Ok(p) => p,
         Err(e) => {
@@ -71,13 +121,12 @@ async fn reload_all(
         }
     };
 
-    let required = new_routes.policy_names();
-    if let Err(e) = new_policies.validate_references(&required) {
+    if let Err(e) =
+        apply_reload_candidate(new_routes, new_policies, routes, policies, tenant_cache).await
+    {
         tracing::warn!("Reload rejected — {}", e);
         return;
     }
 
-    *routes.write().await = new_routes;
-    *policies.write().await = new_policies;
     tracing::info!("Routes and policies reloaded successfully");
 }
