@@ -1,6 +1,6 @@
 use crate::audit::hash::hash_string;
 use crate::policy::Policy;
-use crate::routes::Route;
+use crate::routes::{Route, RouteAuthMode};
 use axum::http::HeaderMap;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -17,6 +17,7 @@ pub fn build_snapshot(route: &Route, policies: &[Policy]) -> PolicySnapshotRecor
     let route_definition = serde_json::json!({
         "id": route.id,
         "path": route.path,
+        "auth_mode": route.auth_mode,
         "upstream": route.upstream,
         "methods": route.methods,
         "policies": route.policies,
@@ -86,6 +87,7 @@ mod tests {
         let route = Route {
             id: "payments".into(),
             path: "/v1/execute/payments".into(),
+            auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream/payments".into(),
             methods: vec!["POST".into()],
             policies: vec!["block-callbacks".into()],
@@ -118,6 +120,7 @@ mod tests {
         let route = Route {
             id: "payments".into(),
             path: "/v1/execute/payments".into(),
+            auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream/payments".into(),
             methods: vec!["POST".into()],
             policies: vec!["policy-a".into()],

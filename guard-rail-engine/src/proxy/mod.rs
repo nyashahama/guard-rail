@@ -204,24 +204,130 @@ pub async fn handle_execute(
     };
     drop(routes);
 
-    // 2. Tenant authentication
+    // 2. Tenant authentication based on auth_mode
     let snapshot = state.tenant_cache.snapshot().await;
-    let route_is_bound = snapshot.route_bindings.contains_key(&route_id);
 
-    let (tenant_id, api_key_id, auth_outcome) = if !route_is_bound {
-        (None, None, None)
-    } else {
-        let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
-        match auth_result {
-            Ok(RequestAuthContext::Tenant {
-                tenant_id,
-                api_key_id,
-                ..
-            }) => {
-                tracing::Span::current().record("tenant_id", tracing::field::display(tenant_id));
-                tracing::Span::current().record("api_key_id", tracing::field::display(api_key_id));
-                let bound_tenant_id = snapshot.route_bindings.get(&route_id);
-                if bound_tenant_id.is_none() || bound_tenant_id != Some(&tenant_id) {
+    let (tenant_id, api_key_id, auth_outcome) = match route.auth_mode {
+        crate::routes::RouteAuthMode::Public => (None, None, None),
+        crate::routes::RouteAuthMode::TenantBound => {
+            let bound_tenant_id = match snapshot.route_bindings.get(&route_id) {
+                Some(tenant_id) => *tenant_id,
+                None => {
+                    let record = ExecutionRecord {
+                        execution_id: execution_id.clone(),
+                        execution_started_at,
+                        route_id: route_id.clone(),
+                        tenant_id: None,
+                        api_key_id: None,
+                        auth_outcome: Some("route_unbound".to_string()),
+                        upstream_url: Some(route.upstream.clone()),
+                        method: method.to_string(),
+                        source_ip: source_ip.clone(),
+                        content_type: content_type.clone(),
+                        user_agent: user_agent.clone(),
+                        had_authorization_header,
+                        request_size_bytes,
+                        request_body_sha256: request_body_sha256.clone(),
+                        verdict: ExecutionVerdict::Rejected,
+                        rejection_reason: Some("route_unbound".to_string()),
+                        matched_policy_name: None,
+                        matched_rule_field: None,
+                        matched_rule_condition: None,
+                        matched_rule_severity: None,
+                        violation_value_hash: None,
+                        violation_value_preview: None,
+                        upstream_status: None,
+                        forward_error: None,
+                        latency_inspect_us: 0,
+                        latency_forward_ms: None,
+                        latency_total_ms: total_start.elapsed().as_millis(),
+                        route_config_hash: state.route_config_hash.clone(),
+                        policy_set_hash: state.policy_set_hash.clone(),
+                    };
+                    tracing::Span::current().record("verdict", "REJECTED");
+                    record_execution_metric(
+                        state.metrics.as_ref(),
+                        &route_id,
+                        method.as_str(),
+                        "REJECTED",
+                        total_start.elapsed().as_secs_f64(),
+                    );
+                    spawn_emit_and_persist(
+                        record,
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                    );
+                    return response::reject_response(&execution_id, "Route is not bound to a tenant");
+                }
+            };
+
+            let auth_result = authenticate_tenant_request(&headers, &state.tenant_cache).await;
+            match auth_result {
+                Ok(RequestAuthContext::Tenant {
+                    tenant_id,
+                    api_key_id,
+                    ..
+                }) if tenant_id == bound_tenant_id => {
+                    tracing::Span::current().record("tenant_id", tracing::field::display(tenant_id));
+                    tracing::Span::current().record("api_key_id", tracing::field::display(api_key_id));
+                    if !state.rate_limiter.allow(tenant_id).await {
+                        let record = ExecutionRecord {
+                            execution_id: execution_id.clone(),
+                            execution_started_at,
+                            route_id: route_id.clone(),
+                            tenant_id: Some(tenant_id),
+                            api_key_id: Some(api_key_id),
+                            auth_outcome: Some("rate_limited".to_string()),
+                            upstream_url: Some(route.upstream.clone()),
+                            method: method.to_string(),
+                            source_ip: source_ip.clone(),
+                            content_type,
+                            user_agent,
+                            had_authorization_header,
+                            request_size_bytes,
+                            request_body_sha256,
+                            verdict: ExecutionVerdict::Rejected,
+                            rejection_reason: Some("rate_limit_exceeded".to_string()),
+                            matched_policy_name: None,
+                            matched_rule_field: None,
+                            matched_rule_condition: None,
+                            matched_rule_severity: None,
+                            violation_value_hash: None,
+                            violation_value_preview: None,
+                            upstream_status: None,
+                            forward_error: None,
+                            latency_inspect_us: 0,
+                            latency_forward_ms: None,
+                            latency_total_ms: total_start.elapsed().as_millis(),
+                            route_config_hash: state.route_config_hash.clone(),
+                            policy_set_hash: state.policy_set_hash.clone(),
+                        };
+                        record_execution_metric(
+                            state.metrics.as_ref(),
+                            &route_id,
+                            method.as_str(),
+                            "REJECTED",
+                            total_start.elapsed().as_secs_f64(),
+                        );
+                        tracing::Span::current().record("verdict", "REJECTED");
+                        spawn_emit_and_persist(
+                            record,
+                            state.audit_store.clone(),
+                            state.metrics.clone(),
+                        );
+                        return (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            "Rate limit exceeded",
+                        )
+                            .into_response();
+                    }
+                    (Some(tenant_id), Some(api_key_id), None)
+                }
+                Ok(RequestAuthContext::Tenant {
+                    tenant_id,
+                    api_key_id,
+                    ..
+                }) => {
                     let record = ExecutionRecord {
                         execution_id: execution_id.clone(),
                         execution_started_at,
@@ -268,14 +374,16 @@ pub async fn handle_execute(
                     );
                     return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
                 }
-                if !state.rate_limiter.allow(tenant_id).await {
+                Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
+                Err(auth_failure) => {
+                    let auth_outcome_str = auth_failure.as_str().to_string();
                     let record = ExecutionRecord {
                         execution_id: execution_id.clone(),
                         execution_started_at,
                         route_id: route_id.clone(),
-                        tenant_id: Some(tenant_id),
-                        api_key_id: Some(api_key_id),
-                        auth_outcome: Some("rate_limited".to_string()),
+                        tenant_id: None,
+                        api_key_id: None,
+                        auth_outcome: Some(auth_outcome_str.clone()),
                         upstream_url: Some(route.upstream.clone()),
                         method: method.to_string(),
                         source_ip: source_ip.clone(),
@@ -285,7 +393,7 @@ pub async fn handle_execute(
                         request_size_bytes,
                         request_body_sha256,
                         verdict: ExecutionVerdict::Rejected,
-                        rejection_reason: Some("rate_limit_exceeded".to_string()),
+                        rejection_reason: Some(auth_outcome_str),
                         matched_policy_name: None,
                         matched_rule_field: None,
                         matched_rule_condition: None,
@@ -308,63 +416,9 @@ pub async fn handle_execute(
                         total_start.elapsed().as_secs_f64(),
                     );
                     tracing::Span::current().record("verdict", "REJECTED");
-                    spawn_emit_and_persist(
-                        record,
-                        state.audit_store.clone(),
-                        state.metrics.clone(),
-                    );
-                    return (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Rate limit exceeded",
-                    )
-                        .into_response();
+                    spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+                    return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
                 }
-                (Some(tenant_id), Some(api_key_id), None)
-            }
-            Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
-            Err(auth_failure) => {
-                let auth_outcome_str = auth_failure.as_str().to_string();
-                let record = ExecutionRecord {
-                    execution_id: execution_id.clone(),
-                    execution_started_at,
-                    route_id: route_id.clone(),
-                    tenant_id: None,
-                    api_key_id: None,
-                    auth_outcome: Some(auth_outcome_str.clone()),
-                    upstream_url: Some(route.upstream.clone()),
-                    method: method.to_string(),
-                    source_ip: source_ip.clone(),
-                    content_type,
-                    user_agent,
-                    had_authorization_header,
-                    request_size_bytes,
-                    request_body_sha256,
-                    verdict: ExecutionVerdict::Rejected,
-                    rejection_reason: Some(auth_outcome_str),
-                    matched_policy_name: None,
-                    matched_rule_field: None,
-                    matched_rule_condition: None,
-                    matched_rule_severity: None,
-                    violation_value_hash: None,
-                    violation_value_preview: None,
-                    upstream_status: None,
-                    forward_error: None,
-                    latency_inspect_us: 0,
-                    latency_forward_ms: None,
-                    latency_total_ms: total_start.elapsed().as_millis(),
-                    route_config_hash: state.route_config_hash.clone(),
-                    policy_set_hash: state.policy_set_hash.clone(),
-                };
-                record_execution_metric(
-                    state.metrics.as_ref(),
-                    &route_id,
-                    method.as_str(),
-                    "REJECTED",
-                    total_start.elapsed().as_secs_f64(),
-                );
-                tracing::Span::current().record("verdict", "REJECTED");
-                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
-                return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
             }
         }
     };
@@ -930,10 +984,12 @@ pub async fn refresh_tenant_auth_cache(state: &AppState) -> Result<(), axum::htt
         .load_auth_snapshot()
         .await
         .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+
     let routes = state.routes.read().await;
-    crate::tenant::cache::validate_all_routes_bound(&routes, &snapshot)
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    crate::tenant::cache::validate_route_auth_state(&routes, &snapshot)
+        .map_err(|_| axum::http::StatusCode::CONFLICT)?;
     drop(routes);
+
     state.tenant_cache.replace(snapshot).await;
     Ok(())
 }

@@ -20,7 +20,7 @@ use reqwest::Client;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tenant::cache::{TenantAuthCache, validate_all_routes_bound};
+use tenant::cache::{TenantAuthCache, validate_route_auth_state};
 use tenant::repository::TenantRepository;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -80,6 +80,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = Arc::new(RwLock::new(route_table));
     let policies = Arc::new(RwLock::new(policy_set));
 
+    let tenant_repo = TenantRepository::new(pool.clone());
+    let auth_snapshot = tenant_repo.load_auth_snapshot().await?;
+
+    validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
+        .map_err(|e| format!("Tenant auth validation failed: {}", e))?;
+
+    let tenant_cache = TenantAuthCache::default();
+    tenant_cache.replace(auth_snapshot).await;
+
     let reload_routes = Arc::clone(&routes);
     let reload_policies = Arc::clone(&policies);
     reload::start_watcher(
@@ -87,6 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(&app_config.policies_dir),
         reload_routes,
         reload_policies,
+        tenant_cache.clone(),
     )?;
 
     let http_client = Client::builder()
@@ -140,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tenant_repo = TenantRepository::new(pool.clone());
     let tenant_cache = TenantAuthCache::default();
     let auth_snapshot = tenant_repo.load_auth_snapshot().await?;
-    validate_all_routes_bound(&route_table_for_cache, &auth_snapshot)
+    validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
         .map_err(|err| format!("Tenant binding validation failed: {err}"))?;
     tenant_cache.replace(auth_snapshot).await;
 
