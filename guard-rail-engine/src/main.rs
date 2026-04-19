@@ -168,19 +168,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replay: app_config.replay.clone(),
     };
 
-    let app = proxy::build_router(
-        state,
-        app_config.admin.token.clone(),
+    let main_app = proxy::build_main_router(
+        state.clone(),
         app_config.server.request_body_limit_bytes,
         &app_config.observability,
     );
 
-    let addr: SocketAddr =
+    let admin_app = proxy::build_admin_router(
+        state.clone(),
+        app_config.admin.token.clone(),
+    );
+
+    let main_addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
 
-    tracing::info!("Guard Rail Engine starting on {}", addr);
+    tracing::info!("Guard Rail Engine starting main listener on {}", main_addr);
 
-    let listener = TcpListener::bind(addr).await?;
+    let main_listener = TcpListener::bind(main_addr).await?;
+
+    let admin_handle = if let Some(admin_config) = &app_config.admin_server {
+        let admin_addr: SocketAddr =
+            format!("{}:{}", admin_config.host, admin_config.port).parse()?;
+        tracing::info!("Guard Rail Engine starting admin listener on {}", admin_addr);
+        let admin_listener = TcpListener::bind(admin_addr).await?;
+
+        let admin_app = admin_app.into_make_service();
+        Some(tokio::spawn(async move {
+            axum::serve(admin_listener, admin_app).await
+        }))
+    } else {
+        None
+    };
+
     lifecycle.mark_ready().await;
     if let Some(metrics) = &metrics {
         metrics.set_readiness(true);
@@ -188,10 +207,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = async move {
+    let main_server = async move {
         axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
+            main_listener,
+            main_app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(async move {
             let _ = drain_rx.await;
@@ -200,10 +219,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let grace_period = std::time::Duration::from_millis(app_config.shutdown.grace_period_ms);
-    tokio::pin!(server);
+    tokio::pin!(main_server);
 
     tokio::select! {
-        result = &mut server => {
+        result = &mut main_server => {
             if let Err(err) = result {
                 return Err(Box::<dyn std::error::Error>::from(err));
             }
@@ -216,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let _ = drain_tx.send(());
 
-            match tokio::time::timeout(grace_period, &mut server).await {
+            match tokio::time::timeout(grace_period, &mut main_server).await {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
                 Err(_) => {
@@ -228,6 +247,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    }
+
+    if let Some(handle) = admin_handle {
+        handle.abort();
     }
 
     lifecycle.mark_stopped().await;

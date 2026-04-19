@@ -837,9 +837,8 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-pub fn build_router(
+pub fn build_main_router(
     state: AppState,
-    admin_token: String,
     request_body_limit_bytes: usize,
     observability: &crate::config::ObservabilityConfig,
 ) -> axum::Router {
@@ -857,6 +856,41 @@ pub fn build_router(
             crate::auth::middleware::require_audit_access,
         ));
 
+    let replay_routes = axum::Router::new()
+        .route(
+            "/v1/replay/executions/{execution_id}",
+            axum::routing::post(crate::replay::api::create_replay)
+                .get(crate::replay::api::get_replay_summary),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::middleware::require_audit_access,
+        ));
+
+    let mut main_router = axum::Router::new()
+        .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        .route("/ready", axum::routing::get(ready_handler))
+        .merge(audit_routes)
+        .merge(replay_routes)
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            request_body_limit_bytes,
+        ));
+
+    if observability.metrics_enabled {
+        main_router = main_router.route(
+            &observability.metrics_path,
+            axum::routing::get(metrics_handler),
+        );
+    }
+
+    main_router.with_state(state)
+}
+
+pub fn build_admin_router(
+    state: AppState,
+    admin_token: String,
+) -> axum::Router {
     let audit_admin_routes = axum::Router::new()
         .route(
             "/v1/audit/integrity",
@@ -927,37 +961,21 @@ pub fn build_router(
             crate::auth::middleware::require_admin_token,
         ));
 
-    let replay_routes = axum::Router::new()
-        .route(
-            "/v1/replay/executions/{execution_id}",
-            axum::routing::post(crate::replay::api::create_replay)
-                .get(crate::replay::api::get_replay_summary),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            crate::auth::middleware::require_audit_access,
-        ));
-
-    let mut main_router = axum::Router::new()
-        .route("/v1/execute/{route_id}", axum::routing::any(handle_execute))
-        .route("/health", axum::routing::get(|| async { "ok" }))
-        .route("/ready", axum::routing::get(ready_handler))
-        .merge(audit_routes)
+    admin_routes
         .merge(audit_admin_routes)
-        .merge(admin_routes)
-        .merge(replay_routes)
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            request_body_limit_bytes,
-        ));
+        .with_state(state)
+}
 
-    if observability.metrics_enabled {
-        main_router = main_router.route(
-            &observability.metrics_path,
-            axum::routing::get(metrics_handler),
-        );
-    }
-
-    main_router.with_state(state)
+#[allow(dead_code)]
+pub fn build_router(
+    state: AppState,
+    admin_token: String,
+    request_body_limit_bytes: usize,
+    observability: &crate::config::ObservabilityConfig,
+) -> axum::Router {
+    let main = build_main_router(state.clone(), request_body_limit_bytes, observability);
+    let admin = build_admin_router(state, admin_token);
+    main.merge(admin)
 }
 
 impl AppState {
