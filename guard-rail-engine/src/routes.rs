@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -56,6 +55,7 @@ impl RouteTable {
         self.by_id.get(route_id)
     }
 
+    #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = &Route> {
         self.by_id.values()
     }
@@ -90,6 +90,7 @@ impl RouteTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RouteAuthMode;
     use std::io::Write;
 
     fn write_yaml(yaml: &str) -> tempfile::NamedTempFile {

@@ -28,28 +28,28 @@ pub fn start_watcher(
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                if matches!(
+            if let Ok(event) = res
+                && matches!(
                     event.kind,
                     EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-                ) {
-                    let routes = Arc::clone(&callback_routes);
-                    let policies = Arc::clone(&callback_policies);
-                    let tenant_cache = callback_tenant_cache.clone();
-                    let routes_path = callback_routes_path.clone();
-                    let policies_path = callback_policies_path.clone();
+                )
+            {
+                let routes = Arc::clone(&callback_routes);
+                let policies = Arc::clone(&callback_policies);
+                let tenant_cache = callback_tenant_cache.clone();
+                let routes_path = callback_routes_path.clone();
+                let policies_path = callback_policies_path.clone();
 
-                    rt.spawn(async move {
-                        reload_all(
-                            &routes_path,
-                            &policies_path,
-                            &routes,
-                            &policies,
-                            &tenant_cache,
-                        )
-                        .await;
-                    });
-                }
+                rt.spawn(async move {
+                    reload_all(
+                        &routes_path,
+                        &policies_path,
+                        &routes,
+                        &policies,
+                        &tenant_cache,
+                    )
+                    .await;
+                });
             }
         })?;
 
@@ -121,14 +121,8 @@ async fn reload_all(
         }
     };
 
-    if let Err(e) = apply_reload_candidate(
-        new_routes,
-        new_policies,
-        routes,
-        policies,
-        tenant_cache,
-    )
-    .await
+    if let Err(e) =
+        apply_reload_candidate(new_routes, new_policies, routes, policies, tenant_cache).await
     {
         tracing::warn!("Reload rejected — {}", e);
         return;

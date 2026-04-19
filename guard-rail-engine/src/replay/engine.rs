@@ -83,11 +83,12 @@ pub async fn replay_execution(
     let original_verdict_str = original.verdict.clone();
     let original_policy_name = original.matched_policy_name.clone();
     let original_rule_field = original.matched_rule_field.clone();
+    let request_size_bytes = original.request_size_bytes;
 
     let replay_verdict = match policy_source {
-        ReplayPolicySource::Snapshot => evaluate_snapshot(&artifacts)?,
+        ReplayPolicySource::Snapshot => evaluate_snapshot(request_size_bytes, &artifacts)?,
         ReplayPolicySource::Current => {
-            evaluate_current(state, &original.route_id, &artifacts).await?
+            evaluate_current(state, &original.route_id, request_size_bytes, &artifacts).await?
         }
     };
 
@@ -141,7 +142,10 @@ pub async fn replay_execution(
     Ok(result)
 }
 
-fn evaluate_snapshot(artifacts: &ExecutionArtifactRow) -> Result<Verdict, ReplayError> {
+fn evaluate_snapshot(
+    request_size_bytes: usize,
+    artifacts: &ExecutionArtifactRow,
+) -> Result<Verdict, ReplayError> {
     let policies_value = &artifacts.policies_definition;
     let policies: Vec<crate::policy::Policy> = serde_json::from_value(policies_value.clone())
         .map_err(|e| ReplayError::PolicyNotFound(format!("invalid snapshot policies: {e}")))?;
@@ -153,12 +157,11 @@ fn evaluate_snapshot(artifacts: &ExecutionArtifactRow) -> Result<Verdict, Replay
         .unwrap_or_default();
 
     let policy_set = crate::policy::PolicySet::from_policies(policies);
-    let policy_names: Vec<String> = route_policies;
 
     Ok(evaluate(
         &artifacts.request_body_json,
-        0,
-        &policy_names,
+        request_size_bytes,
+        &route_policies,
         &policy_set,
     ))
 }
@@ -166,6 +169,7 @@ fn evaluate_snapshot(artifacts: &ExecutionArtifactRow) -> Result<Verdict, Replay
 async fn evaluate_current(
     state: &AppState,
     route_id: &str,
+    request_size_bytes: usize,
     artifacts: &ExecutionArtifactRow,
 ) -> Result<Verdict, ReplayError> {
     let routes = state.routes.read().await;
@@ -178,7 +182,7 @@ async fn evaluate_current(
     let policies = state.policies.read().await;
     Ok(evaluate(
         &artifacts.request_body_json,
-        0,
+        request_size_bytes,
         &route.policies,
         &policies,
     ))

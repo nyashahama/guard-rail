@@ -1,6 +1,6 @@
 use crate::audit::hash::hash_string;
 use crate::policy::Policy;
-use crate::routes::{Route, RouteAuthMode};
+use crate::routes::Route;
 use axum::http::HeaderMap;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -81,6 +81,7 @@ pub fn filter_headers(headers: &HeaderMap, capture_list: &[String]) -> serde_jso
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RouteAuthMode;
 
     #[test]
     fn test_snapshot_hash_is_stable_for_equivalent_route_and_policy_state() {

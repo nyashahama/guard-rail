@@ -64,6 +64,7 @@ impl LifecycleState {
     }
 }
 
+#[allow(dead_code)]
 pub async fn shutdown_signal(
     lifecycle: LifecycleState,
     metrics: Option<Arc<crate::observability::metrics::Metrics>>,

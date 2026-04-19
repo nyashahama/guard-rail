@@ -257,7 +257,10 @@ pub async fn handle_execute(
                         state.audit_store.clone(),
                         state.metrics.clone(),
                     );
-                    return response::reject_response(&execution_id, "Route is not bound to a tenant");
+                    return response::reject_response(
+                        &execution_id,
+                        "Route is not bound to a tenant",
+                    );
                 }
             };
 
@@ -268,8 +271,10 @@ pub async fn handle_execute(
                     api_key_id,
                     ..
                 }) if tenant_id == bound_tenant_id => {
-                    tracing::Span::current().record("tenant_id", tracing::field::display(tenant_id));
-                    tracing::Span::current().record("api_key_id", tracing::field::display(api_key_id));
+                    tracing::Span::current()
+                        .record("tenant_id", tracing::field::display(tenant_id));
+                    tracing::Span::current()
+                        .record("api_key_id", tracing::field::display(api_key_id));
                     if !state.rate_limiter.allow(tenant_id).await {
                         let record = ExecutionRecord {
                             execution_id: execution_id.clone(),
@@ -416,7 +421,11 @@ pub async fn handle_execute(
                         total_start.elapsed().as_secs_f64(),
                     );
                     tracing::Span::current().record("verdict", "REJECTED");
-                    spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+                    spawn_emit_and_persist(
+                        record,
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                    );
                     return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
                 }
             }

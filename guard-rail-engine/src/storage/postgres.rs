@@ -4,8 +4,14 @@ pub use sqlx::postgres::PgPoolOptions;
 
 #[derive(Debug)]
 pub enum IntegrityCheckError {
+    #[allow(dead_code)]
     MissingExecution(String),
-    ReversedRange { from_execution_id: String, to_execution_id: String },
+    #[allow(dead_code)]
+    ReversedRange {
+        from_execution_id: String,
+        to_execution_id: String,
+    },
+    #[allow(dead_code)]
     Storage(sqlx::Error),
 }
 
@@ -64,7 +70,8 @@ impl PostgresAuditStore {
         &self,
         record: &crate::execution::ExecutionRecord,
     ) -> Result<(), sqlx::Error> {
-        let result = tokio::time::timeout(self.write_timeout, self.append_execution_row(record)).await;
+        let result =
+            tokio::time::timeout(self.write_timeout, self.append_execution_row(record)).await;
         match result {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
@@ -109,43 +116,43 @@ impl PostgresAuditStore {
             )
             "#,
         )
-            .bind(&record.execution_id)
-            .bind(record.execution_started_at)
-            .bind(&record.route_id)
-            .bind(record.tenant_id)
-            .bind(record.api_key_id)
-            .bind(&record.auth_outcome)
-            .bind(&record.upstream_url)
-            .bind(&record.method)
-            .bind(&record.source_ip)
-            .bind(&record.content_type)
-            .bind(&record.user_agent)
-            .bind(record.had_authorization_header)
-            .bind(record.request_size_bytes as i64)
-            .bind(&record.request_body_sha256)
-            .bind(match record.verdict {
-                crate::execution::ExecutionVerdict::Rejected => "REJECTED",
-                crate::execution::ExecutionVerdict::Blocked => "BLOCKED",
-                crate::execution::ExecutionVerdict::Allowed => "ALLOWED",
-            })
-            .bind(&record.rejection_reason)
-            .bind(&record.matched_policy_name)
-            .bind(&record.matched_rule_field)
-            .bind(&record.matched_rule_condition)
-            .bind(&record.matched_rule_severity)
-            .bind(&record.violation_value_hash)
-            .bind(&record.violation_value_preview)
-            .bind(record.upstream_status.map(i32::from))
-            .bind(&record.forward_error)
-            .bind(record.latency_inspect_us as i64)
-            .bind(record.latency_forward_ms.map(|v| v as i64))
-            .bind(record.latency_total_ms as i64)
-            .bind(&record.route_config_hash)
-            .bind(&record.policy_set_hash)
-            .bind(&previous_hash)
-            .bind(record_hash)
-            .execute(&mut *tx)
-            .await?;
+        .bind(&record.execution_id)
+        .bind(record.execution_started_at)
+        .bind(&record.route_id)
+        .bind(record.tenant_id)
+        .bind(record.api_key_id)
+        .bind(&record.auth_outcome)
+        .bind(&record.upstream_url)
+        .bind(&record.method)
+        .bind(&record.source_ip)
+        .bind(&record.content_type)
+        .bind(&record.user_agent)
+        .bind(record.had_authorization_header)
+        .bind(record.request_size_bytes as i64)
+        .bind(&record.request_body_sha256)
+        .bind(match record.verdict {
+            crate::execution::ExecutionVerdict::Rejected => "REJECTED",
+            crate::execution::ExecutionVerdict::Blocked => "BLOCKED",
+            crate::execution::ExecutionVerdict::Allowed => "ALLOWED",
+        })
+        .bind(&record.rejection_reason)
+        .bind(&record.matched_policy_name)
+        .bind(&record.matched_rule_field)
+        .bind(&record.matched_rule_condition)
+        .bind(&record.matched_rule_severity)
+        .bind(&record.violation_value_hash)
+        .bind(&record.violation_value_preview)
+        .bind(record.upstream_status.map(i32::from))
+        .bind(&record.forward_error)
+        .bind(record.latency_inspect_us as i64)
+        .bind(record.latency_forward_ms.map(|v| v as i64))
+        .bind(record.latency_total_ms as i64)
+        .bind(&record.route_config_hash)
+        .bind(&record.policy_set_hash)
+        .bind(&previous_hash)
+        .bind(record_hash)
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         Ok(())
@@ -575,18 +582,24 @@ impl PostgresAuditStore {
         &self,
         query: crate::audit::api::IntegrityQuery,
     ) -> Result<crate::audit::api::IntegrityResponse, IntegrityCheckError> {
-        let from_row = sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
-            .bind(&query.from_execution_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(IntegrityCheckError::Storage)?
-            .ok_or_else(|| IntegrityCheckError::MissingExecution(query.from_execution_id.clone()))?;
-        let to_row = sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
-            .bind(&query.to_execution_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(IntegrityCheckError::Storage)?
-            .ok_or_else(|| IntegrityCheckError::MissingExecution(query.to_execution_id.clone()))?;
+        let from_row =
+            sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
+                .bind(&query.from_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?
+                .ok_or_else(|| {
+                    IntegrityCheckError::MissingExecution(query.from_execution_id.clone())
+                })?;
+        let to_row =
+            sqlx::query("select id, execution_id from execution_audit where execution_id = $1")
+                .bind(&query.to_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?
+                .ok_or_else(|| {
+                    IntegrityCheckError::MissingExecution(query.to_execution_id.clone())
+                })?;
 
         let from_id: i64 = from_row.get("id");
         let to_id: i64 = to_row.get("id");

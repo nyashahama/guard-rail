@@ -124,6 +124,7 @@ impl Metrics {
         }
     }
 
+    #[allow(dead_code)]
     pub fn inflight_requests(&self) -> i64 {
         self.inflight_requests.get()
     }
