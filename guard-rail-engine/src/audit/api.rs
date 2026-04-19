@@ -107,6 +107,14 @@ pub async fn verify_integrity(
     let result = store
         .verify_integrity(query)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|err| match err {
+            crate::storage::postgres::IntegrityCheckError::MissingExecution(_)
+            | crate::storage::postgres::IntegrityCheckError::ReversedRange { .. } => {
+                StatusCode::BAD_REQUEST
+            }
+            crate::storage::postgres::IntegrityCheckError::Storage(_) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        })?;
     Ok(Json(result))
 }
