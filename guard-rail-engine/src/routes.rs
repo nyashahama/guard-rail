@@ -8,6 +8,46 @@ pub enum RouteAuthMode {
     TenantBound,
 }
 
+#[derive(Debug)]
+pub struct UpstreamSecurityError {
+    pub route_id: String,
+    pub upstream: String,
+}
+
+impl std::fmt::Display for UpstreamSecurityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Route '{}' uses insecure upstream '{}' (must be https)",
+            self.route_id, self.upstream
+        )
+    }
+}
+
+pub struct RouteValidator;
+
+impl RouteValidator {
+    pub fn validate_upstream_security(
+        routes: &RouteTable,
+        environment: crate::config::RuntimeEnvironment,
+    ) -> Result<(), UpstreamSecurityError> {
+        if !matches!(environment, crate::config::RuntimeEnvironment::Production) {
+            return Ok(());
+        }
+
+        for route in routes.iter() {
+            let upstream = route.upstream.to_lowercase();
+            if upstream.starts_with("http://") {
+                return Err(UpstreamSecurityError {
+                    route_id: route.id.clone(),
+                    upstream: route.upstream.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutesConfig {
     pub routes: Vec<Route>,

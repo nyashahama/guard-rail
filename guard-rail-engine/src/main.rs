@@ -86,6 +86,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
         .map_err(|e| format!("Tenant auth validation failed: {}", e))?;
 
+    routes::RouteValidator::validate_upstream_security(&route_table_for_cache, app_config.environment)
+        .map_err(|e| format!("Upstream security validation failed: {}", e))?;
+
     let tenant_cache = TenantAuthCache::default();
     tenant_cache.replace(auth_snapshot).await;
 
@@ -97,6 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reload_routes,
         reload_policies,
         tenant_cache.clone(),
+        app_config.environment,
     )?;
 
     let http_client = Client::builder()

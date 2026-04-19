@@ -12,6 +12,7 @@ pub fn start_watcher(
     routes: Arc<RwLock<RouteTable>>,
     policies: Arc<RwLock<PolicySet>>,
     tenant_cache: TenantAuthCache,
+    environment: crate::config::RuntimeEnvironment,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Handle::current();
     let rt_initial = rt.clone();
@@ -25,33 +26,27 @@ pub fn start_watcher(
     let callback_tenant_cache = tenant_cache.clone();
     let callback_routes_path = routes_file.clone();
     let callback_policies_path = policies_dir.clone();
+    let callback_environment = environment;
 
-    let mut watcher =
-        notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res
-                && matches!(
-                    event.kind,
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-                )
-            {
-                let routes = Arc::clone(&callback_routes);
-                let policies = Arc::clone(&callback_policies);
-                let tenant_cache = callback_tenant_cache.clone();
-                let routes_path = callback_routes_path.clone();
-                let policies_path = callback_policies_path.clone();
+    let mut watcher = notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
+        if let Ok(event) = res
+            && matches!(
+                event.kind,
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+            )
+        {
+            let routes = Arc::clone(&callback_routes);
+            let policies = Arc::clone(&callback_policies);
+            let tenant_cache = callback_tenant_cache.clone();
+            let routes_path = callback_routes_path.clone();
+            let policies_path = callback_policies_path.clone();
+            let environment = callback_environment;
 
-                rt.spawn(async move {
-                    reload_all(
-                        &routes_path,
-                        &policies_path,
-                        &routes,
-                        &policies,
-                        &tenant_cache,
-                    )
-                    .await;
-                });
-            }
-        })?;
+            rt.spawn(async move {
+                reload_all(&routes_path, &policies_path, &routes, &policies, &tenant_cache, environment).await;
+            });
+        }
+    })?;
 
     if let Some(parent) = routes_file.parent() {
         watcher.watch(parent, RecursiveMode::NonRecursive)?;
@@ -69,6 +64,7 @@ pub fn start_watcher(
             &final_routes,
             &final_policies,
             &initial_tenant_cache,
+            environment,
         )
         .await;
     });
@@ -83,6 +79,7 @@ pub async fn apply_reload_candidate(
     routes: &Arc<RwLock<RouteTable>>,
     policies: &Arc<RwLock<PolicySet>>,
     tenant_cache: &TenantAuthCache,
+    environment: crate::config::RuntimeEnvironment,
 ) -> Result<(), String> {
     let required = new_routes.policy_names();
     new_policies
@@ -92,6 +89,9 @@ pub async fn apply_reload_candidate(
     let snapshot = tenant_cache.snapshot().await;
     crate::tenant::cache::validate_route_auth_state(&new_routes, &snapshot)
         .map_err(|err| format!("{err:?}"))?;
+
+    crate::routes::RouteValidator::validate_upstream_security(&new_routes, environment)
+        .map_err(|err| format!("{err}"))?;
 
     *routes.write().await = new_routes;
     *policies.write().await = new_policies;
@@ -104,6 +104,7 @@ async fn reload_all(
     routes: &Arc<RwLock<RouteTable>>,
     policies: &Arc<RwLock<PolicySet>>,
     tenant_cache: &TenantAuthCache,
+    environment: crate::config::RuntimeEnvironment,
 ) {
     let new_policies = match PolicySet::load_dir(policies_path) {
         Ok(p) => p,
@@ -122,7 +123,7 @@ async fn reload_all(
     };
 
     if let Err(e) =
-        apply_reload_candidate(new_routes, new_policies, routes, policies, tenant_cache).await
+        apply_reload_candidate(new_routes, new_policies, routes, policies, tenant_cache, environment).await
     {
         tracing::warn!("Reload rejected — {}", e);
         return;
