@@ -14,10 +14,9 @@ pub struct RoutesConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct Route {
     pub id: String,
-    #[allow(dead_code)]
-    pub path: String,
     pub auth_mode: RouteAuthMode,
     pub upstream: String,
     pub methods: Vec<String>,
@@ -120,7 +119,6 @@ routes:
     fn test_validate_route_auth_state_allows_unbound_tenant_bound_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "bootstrap-route".into(),
-            path: "/v1/execute/bootstrap-route".into(),
             auth_mode: RouteAuthMode::TenantBound,
             upstream: "http://upstream".into(),
             methods: vec!["POST".into()],
@@ -136,7 +134,6 @@ routes:
     fn test_validate_route_auth_state_rejects_bound_public_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "open-route".into(),
-            path: "/v1/execute/open-route".into(),
             auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream".into(),
             methods: vec!["POST".into()],
@@ -278,7 +275,6 @@ routes:
     fn test_validate_all_routes_bound_returns_error_for_unbound_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "test-route".to_string(),
-            path: "/v1/execute/test-route".to_string(),
             auth_mode: RouteAuthMode::TenantBound,
             upstream: "http://upstream".to_string(),
             methods: vec!["POST".to_string()],

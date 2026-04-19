@@ -16,7 +16,6 @@ pub struct PolicySnapshotRecord {
 pub fn build_snapshot(route: &Route, policies: &[Policy]) -> PolicySnapshotRecord {
     let route_definition = serde_json::json!({
         "id": route.id,
-        "path": route.path,
         "auth_mode": route.auth_mode,
         "upstream": route.upstream,
         "methods": route.methods,
@@ -87,7 +86,6 @@ mod tests {
     fn test_snapshot_hash_is_stable_for_equivalent_route_and_policy_state() {
         let route = Route {
             id: "payments".into(),
-            path: "/v1/execute/payments".into(),
             auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream/payments".into(),
             methods: vec!["POST".into()],
@@ -120,7 +118,6 @@ mod tests {
     fn test_snapshot_builder_uses_only_route_referenced_policies() {
         let route = Route {
             id: "payments".into(),
-            path: "/v1/execute/payments".into(),
             auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream/payments".into(),
             methods: vec!["POST".into()],
