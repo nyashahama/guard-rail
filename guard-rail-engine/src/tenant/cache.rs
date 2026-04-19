@@ -33,6 +33,39 @@ impl TenantAuthCache {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteAuthStateError {
+    PublicRouteBound { route_id: String, tenant_id: uuid::Uuid },
+}
+
+impl std::fmt::Display for RouteAuthStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RouteAuthStateError::PublicRouteBound { route_id, tenant_id } => {
+                write!(f, "Public route '{}' is bound to tenant {}", route_id, tenant_id)
+            }
+        }
+    }
+}
+
+pub fn validate_route_auth_state(
+    routes: &crate::routes::RouteTable,
+    snapshot: &TenantAuthSnapshot,
+) -> Result<(), RouteAuthStateError> {
+    for route in routes.iter() {
+        if matches!(route.auth_mode, crate::routes::RouteAuthMode::Public) {
+            if let Some(tenant_id) = snapshot.route_bindings.get(&route.id) {
+                return Err(RouteAuthStateError::PublicRouteBound {
+                    route_id: route.id.clone(),
+                    tenant_id: *tenant_id,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn validate_all_routes_bound(
     routes: &crate::routes::RouteTable,
     snapshot: &TenantAuthSnapshot,

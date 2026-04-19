@@ -97,6 +97,7 @@ async fn start_stage2_test_app() -> Stage2TestHarness {
 routes:
   - id: test-route
     path: /v1/execute/test-route
+    auth_mode: public
     upstream: {upstream}/api/target
     methods: [POST]
     policies: [block-callbacks]
@@ -519,11 +520,13 @@ async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3Te
 routes:
   - id: test-route
     path: /v1/execute/test-route
+    auth_mode: tenant_bound
     upstream: {upstream}/tenant-a
     methods: [POST]
     policies: []
   - id: tenant-b-route
     path: /v1/execute/tenant-b-route
+    auth_mode: tenant_bound
     upstream: {upstream}/tenant-b
     methods: [POST]
     policies: []
