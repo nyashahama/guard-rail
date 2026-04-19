@@ -77,7 +77,7 @@ pub async fn shutdown_signal(
     }
 }
 
-async fn wait_for_signal() {
+pub async fn wait_for_signal() {
     #[cfg(unix)]
     {
         let mut terminate =

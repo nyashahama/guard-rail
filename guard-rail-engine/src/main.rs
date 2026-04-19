@@ -193,29 +193,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics.set_readiness(true);
         metrics.record_shutdown_transition("ready");
     }
+
+    let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
     let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown::shutdown_signal(
-        lifecycle.clone(),
-        metrics.clone(),
-    ));
+    .with_graceful_shutdown(async move {
+        let _ = drain_rx.await;
+    });
 
-    match tokio::time::timeout(
-        std::time::Duration::from_millis(app_config.shutdown.grace_period_ms),
-        server,
-    )
-    .await
-    {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
-        Err(_) => {
-            let inflight_requests = metrics
-                .as_ref()
-                .map(|metrics| metrics.inflight_requests())
-                .unwrap_or(0);
-            tracing::warn!(inflight_requests, "grace period expired while draining");
+    tokio::select! {
+        result = server => {
+            if let Err(err) = result {
+                return Err(Box::<dyn std::error::Error>::from(err));
+            }
+        }
+        _ = shutdown::wait_for_signal() => {
+            lifecycle.begin_drain().await;
+            if let Some(metrics) = &metrics {
+                metrics.set_readiness(false);
+                metrics.record_shutdown_transition("draining");
+            }
+            let _ = drain_tx.send(());
         }
     }
 
