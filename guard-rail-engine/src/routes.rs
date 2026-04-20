@@ -36,8 +36,10 @@ impl RouteValidator {
         }
 
         for route in routes.iter() {
-            let upstream = route.upstream.to_lowercase();
-            if upstream.starts_with("http://") {
+            let is_https = reqwest::Url::parse(&route.upstream)
+                .ok()
+                .is_some_and(|url| url.scheme() == "https");
+            if !is_https {
                 return Err(UpstreamSecurityError {
                     route_id: route.id.clone(),
                     upstream: route.upstream.clone(),
@@ -55,6 +57,7 @@ pub struct RoutesConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Route {
     pub id: String,
     pub auth_mode: RouteAuthMode,
@@ -164,7 +167,6 @@ mod tests {
             r#"
 routes:
   - id: missing-auth-mode
-    path: /v1/execute/missing-auth-mode
     upstream: https://example.com
     methods: [POST]
     policies: []
@@ -219,14 +221,12 @@ routes:
             r#"
 routes:
   - id: transfer-api
-    path: /v1/execute/transfer-api
     auth_mode: public
     upstream: https://bank.za/api/transfer
     methods: [POST, PUT]
     policies: [block-callbacks]
     timeout_ms: 3000
   - id: partner
-    path: /v1/execute/partner
     auth_mode: tenant_bound
     upstream: https://erp.internal/webhook
     methods: [POST]
@@ -251,7 +251,6 @@ routes:
             r#"
 routes:
   - id: test
-    path: /v1/execute/test
     auth_mode: public
     upstream: https://example.com
     methods: [POST]
@@ -269,13 +268,11 @@ routes:
             r#"
 routes:
   - id: dup
-    path: /v1/execute/dup
     auth_mode: public
     upstream: https://a.com
     methods: [POST]
     policies: []
   - id: dup
-    path: /v1/execute/dup2
     auth_mode: public
     upstream: https://b.com
     methods: [POST]
@@ -293,13 +290,11 @@ routes:
             r#"
 routes:
   - id: a
-    path: /v1/execute/a
     auth_mode: public
     upstream: https://a.com
     methods: [POST]
     policies: [pol-a, pol-b]
   - id: b
-    path: /v1/execute/b
     auth_mode: tenant_bound
     upstream: https://b.com
     methods: [POST]
@@ -317,7 +312,6 @@ routes:
             r#"
 routes:
   - id: test
-    path: /v1/execute/test
     auth_mode: public
     upstream: https://example.com
     methods: [POST]
@@ -345,5 +339,42 @@ routes:
         let snapshot = crate::tenant::cache::TenantAuthSnapshot::default();
         let err = crate::tenant::cache::validate_all_routes_bound(&routes, &snapshot).unwrap_err();
         assert!(err.contains("test-route"));
+    }
+
+    #[test]
+    fn test_path_field_is_rejected() {
+        let tmp = write_yaml(
+            r#"
+routes:
+  - id: legacy-route
+    path: /v1/execute/legacy-route
+    auth_mode: public
+    upstream: https://example.com
+    methods: [POST]
+    policies: []
+"#,
+        );
+
+        let err = RouteTable::load(tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("path"));
+    }
+
+    #[test]
+    fn test_non_https_upstream_rejected_in_production() {
+        let routes = RouteTable::from_routes(vec![Route::new(
+            "insecure".to_string(),
+            RouteAuthMode::Public,
+            "ftp://example.com/path".to_string(),
+            vec!["POST".to_string()],
+            vec![],
+        )]);
+
+        let err = RouteValidator::validate_upstream_security(
+            &routes,
+            crate::config::RuntimeEnvironment::Production,
+        )
+        .unwrap_err();
+        assert_eq!(err.route_id, "insecure");
     }
 }

@@ -19,29 +19,11 @@ pub async fn require_admin_token(
     Ok(next.run(request).await)
 }
 
-pub fn has_valid_admin_token(headers: &axum::http::HeaderMap, admin_token: &str) -> bool {
-    let header = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("");
-
-    let expected = format!("Bearer {}", admin_token);
-    header == expected
-}
-
 pub async fn require_audit_access(
     State(state): State<crate::proxy::AppState>,
     request: axum::extract::Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    if has_valid_admin_token(request.headers(), &state.admin_token) {
-        let mut request = request;
-        request
-            .extensions_mut()
-            .insert(crate::auth::context::AuditAccess::Admin);
-        return Ok(next.run(request).await);
-    }
-
     let tenant =
         crate::auth::context::authenticate_tenant_request(request.headers(), &state.tenant_cache)
             .await

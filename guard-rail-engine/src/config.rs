@@ -263,6 +263,21 @@ impl AppConfig {
         }
 
         // Environment variable overrides
+        if let Ok(val) = std::env::var("GUARDRAIL_ENVIRONMENT") {
+            config.environment = match val.trim().to_ascii_lowercase().as_str() {
+                "development" => RuntimeEnvironment::Development,
+                "production" => RuntimeEnvironment::Production,
+                other => {
+                    return Err(
+                        format!(
+                            "invalid GUARDRAIL_ENVIRONMENT value '{}'; expected development or production",
+                            other
+                        )
+                        .into(),
+                    );
+                }
+            };
+        }
         if let Ok(val) = std::env::var("GUARDRAIL_SERVER__HOST") {
             config.server.host = val;
         }
@@ -336,6 +351,7 @@ mod tests {
 
     fn clear_env_vars() {
         unsafe {
+            std::env::remove_var("GUARDRAIL_ENVIRONMENT");
             std::env::remove_var("GUARDRAIL_SERVER__HOST");
             std::env::remove_var("GUARDRAIL_SERVER__PORT");
             std::env::remove_var("GUARDRAIL_LOGGING__LEVEL");
@@ -709,5 +725,35 @@ rate_limit: {}
         assert_eq!(config.admin.token, "from-env");
         assert_eq!(config.rate_limit.requests_per_minute, 200);
         assert_eq!(config.rate_limit.burst, 50);
+    }
+
+    #[test]
+    fn test_environment_env_override() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+environment: development
+server:
+  host: "0.0.0.0"
+  port: 8080
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+rate_limit: {}
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var("GUARDRAIL_ENVIRONMENT", "production");
+        }
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.environment, RuntimeEnvironment::Production);
     }
 }

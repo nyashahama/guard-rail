@@ -42,6 +42,26 @@ struct Cli {
     config: PathBuf,
 }
 
+fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
+    let requires_strong_admin_token =
+        matches!(config.environment, config::RuntimeEnvironment::Production)
+            && config.admin_server.is_some();
+
+    if !requires_strong_admin_token {
+        return Ok(());
+    }
+
+    let token = config.admin.token.trim();
+    if token.is_empty() || token.eq_ignore_ascii_case("change-me") {
+        return Err(
+            "invalid admin token for production admin listener; configure a non-default token"
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -56,7 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Migrations applied successfully");
             return Ok(());
         }
-        Command::Serve => {}
+        Command::Serve => {
+            validate_startup_security(&app_config)
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+        }
     }
 
     observability::tracing::init(&app_config.logging, &app_config.observability)
@@ -273,6 +296,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::io::Write;
+
+    fn test_config(
+        environment: &str,
+        include_admin_server: bool,
+        admin_token: &str,
+    ) -> config::AppConfig {
+        let admin_server = if include_admin_server {
+            r#"
+admin_server:
+  host: "127.0.0.1"
+  port: 8081
+"#
+        } else {
+            ""
+        };
+
+        let yaml = format!(
+            r#"
+environment: {environment}
+server:
+  host: "127.0.0.1"
+  port: 8080
+routes_file: "./config/routes.yaml"
+policies_dir: "./config/policies"
+forwarding: {{}}
+logging: {{}}
+database:
+  url: "postgres://user:pass@localhost/db"
+audit: {{}}
+admin:
+  token: "{admin_token}"
+{admin_server}
+rate_limit: {{}}
+"#
+        );
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+        config::AppConfig::load(tmp.path()).unwrap()
+    }
 
     #[test]
     fn test_migrate_command_parses() {
@@ -293,5 +357,25 @@ mod tests {
         let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
         let command = cli.command.unwrap_or_default();
         assert!(matches!(command, Command::Serve));
+    }
+
+    #[test]
+    fn test_production_admin_listener_rejects_default_token() {
+        let cfg = test_config("production", true, "change-me");
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("invalid admin token"));
+    }
+
+    #[test]
+    fn test_production_admin_listener_rejects_empty_token() {
+        let cfg = test_config("production", true, "   ");
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("invalid admin token"));
+    }
+
+    #[test]
+    fn test_development_allows_default_token() {
+        let cfg = test_config("development", true, "change-me");
+        assert!(validate_startup_security(&cfg).is_ok());
     }
 }

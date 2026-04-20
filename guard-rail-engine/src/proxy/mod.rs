@@ -52,6 +52,7 @@ pub struct AppState {
     pub trace_header_name: String,
     pub route_config_hash: String,
     pub policy_set_hash: String,
+    #[allow(dead_code)]
     pub admin_token: String,
     pub tenant_repo: crate::tenant::repository::TenantRepository,
     pub tenant_cache: crate::tenant::cache::TenantAuthCache,
@@ -851,7 +852,7 @@ pub fn build_main_router(
             "/v1/audit/executions/{execution_id}",
             axum::routing::get(crate::audit::api::get_execution),
         )
-        .layer(axum::middleware::from_fn_with_state(
+        .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware::require_audit_access,
         ));
@@ -862,7 +863,7 @@ pub fn build_main_router(
             axum::routing::post(crate::replay::api::create_replay)
                 .get(crate::replay::api::get_replay_summary),
         )
-        .layer(axum::middleware::from_fn_with_state(
+        .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::auth::middleware::require_audit_access,
         ));
