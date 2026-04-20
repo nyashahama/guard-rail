@@ -82,3 +82,10 @@ export GUARDRAIL_SERVER__PORT=18080
 
 ./scripts/ci/runtime-smoke.sh
 ```
+
+## Observability
+
+The runtime exposes Prometheus metrics at `/metrics`. See `guard-rail-engine/deploy/observability/` for:
+- Alert rules (`prometheus-alerts.yml`)
+- Grafana dashboard (`grafana-dashboard.json`)
+- Operator runbooks (`RUNBOOKS.md`)
