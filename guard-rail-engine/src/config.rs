@@ -1,8 +1,35 @@
 use serde::Deserialize;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeEnvironment {
+    #[default]
+    Development,
+    Production,
+}
+
+impl std::fmt::Display for RuntimeEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RuntimeEnvironment::Development => write!(f, "development"),
+            RuntimeEnvironment::Production => write!(f, "production"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AdminServerConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub environment: RuntimeEnvironment,
     pub server: ServerConfig,
     pub routes_file: String,
     pub policies_dir: String,
@@ -11,7 +38,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub audit: AuditConfig,
     pub admin: AdminConfig,
-    pub tenant_auth: TenantAuthConfig,
+    #[serde(default)]
+    pub admin_server: Option<AdminServerConfig>,
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
     pub replay: ReplayConfig,
@@ -19,6 +47,8 @@ pub struct AppConfig {
     pub observability: ObservabilityConfig,
     #[serde(default)]
     pub shutdown: ShutdownConfig,
+    #[serde(flatten, default)]
+    _extra: serde_yaml::Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,12 +122,14 @@ pub struct AdminConfig {
     pub token: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct TenantAuthConfig {
     #[serde(default = "default_authorization_header")]
     pub header_name: String,
 }
 
+#[allow(dead_code)]
 fn default_authorization_header() -> String {
     "authorization".to_string()
 }
@@ -226,7 +258,26 @@ impl AppConfig {
         let contents = std::fs::read_to_string(path)?;
         let mut config: AppConfig = serde_yaml::from_str(&contents)?;
 
+        if config._extra.get("tenant_auth").is_some() {
+            return Err("tenant_auth is no longer supported in config".into());
+        }
+
         // Environment variable overrides
+        if let Ok(val) = std::env::var("GUARDRAIL_ENVIRONMENT") {
+            config.environment = match val.trim().to_ascii_lowercase().as_str() {
+                "development" => RuntimeEnvironment::Development,
+                "production" => RuntimeEnvironment::Production,
+                other => {
+                    return Err(
+                        format!(
+                            "invalid GUARDRAIL_ENVIRONMENT value '{}'; expected development or production",
+                            other
+                        )
+                        .into(),
+                    );
+                }
+            };
+        }
         if let Ok(val) = std::env::var("GUARDRAIL_SERVER__HOST") {
             config.server.host = val;
         }
@@ -247,9 +298,6 @@ impl AppConfig {
         }
         if let Ok(val) = std::env::var("GUARDRAIL_ADMIN__TOKEN") {
             config.admin.token = val;
-        }
-        if let Ok(val) = std::env::var("GUARDRAIL_TENANT_AUTH__HEADER_NAME") {
-            config.tenant_auth.header_name = val;
         }
         if let Ok(val) = std::env::var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE") {
             config.rate_limit.requests_per_minute = val.parse()?;
@@ -303,6 +351,7 @@ mod tests {
 
     fn clear_env_vars() {
         unsafe {
+            std::env::remove_var("GUARDRAIL_ENVIRONMENT");
             std::env::remove_var("GUARDRAIL_SERVER__HOST");
             std::env::remove_var("GUARDRAIL_SERVER__PORT");
             std::env::remove_var("GUARDRAIL_LOGGING__LEVEL");
@@ -365,8 +414,6 @@ audit:
   write_timeout_ms: 100
 admin:
   token: "test-token"
-tenant_auth:
-  header_name: "authorization"
 rate_limit:
   requests_per_minute: 120
   burst: 30
@@ -398,7 +445,6 @@ database:
 audit: {}
 admin:
   token: "default-admin"
-tenant_auth: {}
 rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -440,8 +486,6 @@ database:
 audit: {}
 admin:
   token: "stage2-admin-token"
-tenant_auth:
-  header_name: "authorization"
 rate_limit:
   requests_per_minute: 120
   burst: 30
@@ -450,7 +494,7 @@ rate_limit:
         tmp.write_all(yaml.as_bytes()).unwrap();
 
         let config = AppConfig::load(tmp.path()).unwrap();
-        assert_eq!(config.tenant_auth.header_name, "authorization");
+        assert_eq!(config.environment, RuntimeEnvironment::Development);
         assert_eq!(config.rate_limit.requests_per_minute, 120);
         assert_eq!(config.rate_limit.burst, 30);
     }
@@ -471,7 +515,6 @@ database:
 audit: {}
 admin:
   token: "stage2-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay:
   enabled: true
@@ -505,7 +548,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 observability:
@@ -543,7 +585,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 "#;
@@ -577,7 +618,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 observability: {}
@@ -625,8 +665,6 @@ audit:
   write_timeout_ms: 250
 admin:
   token: "stage2-admin-token"
-tenant_auth:
-  header_name: "authorization"
 rate_limit:
   requests_per_minute: 120
   burst: 30
@@ -659,8 +697,7 @@ database:
   url: "postgres://guardrail:secret@localhost:5432/guardrail"
 audit: {}
 admin:
-  token: "from-config"
-tenant_auth: {}
+  token: "stage-admin-token"
 rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -674,7 +711,6 @@ rate_limit: {}
             std::env::set_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS", "20");
             std::env::set_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS", "400");
             std::env::set_var("GUARDRAIL_ADMIN__TOKEN", "from-env");
-            std::env::set_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME", "x-custom-auth");
             std::env::set_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE", "200");
             std::env::set_var("GUARDRAIL_RATE_LIMIT__BURST", "50");
         }
@@ -687,8 +723,37 @@ rate_limit: {}
         assert_eq!(config.database.max_connections, 20);
         assert_eq!(config.audit.write_timeout_ms, 400);
         assert_eq!(config.admin.token, "from-env");
-        assert_eq!(config.tenant_auth.header_name, "x-custom-auth");
         assert_eq!(config.rate_limit.requests_per_minute, 200);
         assert_eq!(config.rate_limit.burst, 50);
+    }
+
+    #[test]
+    fn test_environment_env_override() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+environment: development
+server:
+  host: "0.0.0.0"
+  port: 8080
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+rate_limit: {}
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var("GUARDRAIL_ENVIRONMENT", "production");
+        }
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.environment, RuntimeEnvironment::Production);
     }
 }

@@ -42,6 +42,26 @@ struct Cli {
     config: PathBuf,
 }
 
+fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
+    let requires_strong_admin_token =
+        matches!(config.environment, config::RuntimeEnvironment::Production)
+            && config.admin_server.is_some();
+
+    if !requires_strong_admin_token {
+        return Ok(());
+    }
+
+    let token = config.admin.token.trim();
+    if token.is_empty() || token.eq_ignore_ascii_case("change-me") {
+        return Err(
+            "invalid admin token for production admin listener; configure a non-default token"
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -56,7 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Migrations applied successfully");
             return Ok(());
         }
-        Command::Serve => {}
+        Command::Serve => {
+            validate_startup_security(&app_config)
+                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+        }
     }
 
     observability::tracing::init(&app_config.logging, &app_config.observability)
@@ -86,6 +109,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
         .map_err(|e| format!("Tenant auth validation failed: {}", e))?;
 
+    routes::RouteValidator::validate_upstream_security(
+        &route_table_for_cache,
+        app_config.environment,
+    )
+    .map_err(|e| format!("Upstream security validation failed: {}", e))?;
+
     let tenant_cache = TenantAuthCache::default();
     tenant_cache.replace(auth_snapshot).await;
 
@@ -97,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reload_routes,
         reload_policies,
         tenant_cache.clone(),
+        app_config.environment,
     )?;
 
     let http_client = Client::builder()
@@ -168,19 +198,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         replay: app_config.replay.clone(),
     };
 
-    let app = proxy::build_router(
-        state,
-        app_config.admin.token.clone(),
+    let main_app = proxy::build_main_router(
+        state.clone(),
         app_config.server.request_body_limit_bytes,
         &app_config.observability,
     );
 
-    let addr: SocketAddr =
+    let admin_app = proxy::build_admin_router(state.clone(), app_config.admin.token.clone());
+
+    let main_addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
 
-    tracing::info!("Guard Rail Engine starting on {}", addr);
+    tracing::info!("Guard Rail Engine starting main listener on {}", main_addr);
 
-    let listener = TcpListener::bind(addr).await?;
+    let main_listener = TcpListener::bind(main_addr).await?;
+
+    let admin_handle = if let Some(admin_config) = &app_config.admin_server {
+        let admin_addr: SocketAddr =
+            format!("{}:{}", admin_config.host, admin_config.port).parse()?;
+        tracing::info!(
+            "Guard Rail Engine starting admin listener on {}",
+            admin_addr
+        );
+        let admin_listener = TcpListener::bind(admin_addr).await?;
+
+        let admin_app = admin_app.into_make_service();
+        Some(tokio::spawn(async move {
+            axum::serve(admin_listener, admin_app).await
+        }))
+    } else {
+        None
+    };
+
     lifecycle.mark_ready().await;
     if let Some(metrics) = &metrics {
         metrics.set_readiness(true);
@@ -188,10 +237,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let (drain_tx, drain_rx) = tokio::sync::oneshot::channel::<()>();
-    let server = async move {
+    let main_server = async move {
         axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
+            main_listener,
+            main_app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(async move {
             let _ = drain_rx.await;
@@ -200,10 +249,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let grace_period = std::time::Duration::from_millis(app_config.shutdown.grace_period_ms);
-    tokio::pin!(server);
+    tokio::pin!(main_server);
 
     tokio::select! {
-        result = &mut server => {
+        result = &mut main_server => {
             if let Err(err) = result {
                 return Err(Box::<dyn std::error::Error>::from(err));
             }
@@ -216,7 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let _ = drain_tx.send(());
 
-            match tokio::time::timeout(grace_period, &mut server).await {
+            match tokio::time::timeout(grace_period, &mut main_server).await {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => return Err(Box::<dyn std::error::Error>::from(err)),
                 Err(_) => {
@@ -228,6 +277,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    }
+
+    if let Some(handle) = admin_handle {
+        handle.abort();
     }
 
     lifecycle.mark_stopped().await;
@@ -243,6 +296,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::io::Write;
+
+    fn test_config(
+        environment: &str,
+        include_admin_server: bool,
+        admin_token: &str,
+    ) -> config::AppConfig {
+        let admin_server = if include_admin_server {
+            r#"
+admin_server:
+  host: "127.0.0.1"
+  port: 8081
+"#
+        } else {
+            ""
+        };
+
+        let yaml = format!(
+            r#"
+environment: {environment}
+server:
+  host: "127.0.0.1"
+  port: 8080
+routes_file: "./config/routes.yaml"
+policies_dir: "./config/policies"
+forwarding: {{}}
+logging: {{}}
+database:
+  url: "postgres://user:pass@localhost/db"
+audit: {{}}
+admin:
+  token: "{admin_token}"
+{admin_server}
+rate_limit: {{}}
+"#
+        );
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+        config::AppConfig::load(tmp.path()).unwrap()
+    }
 
     #[test]
     fn test_migrate_command_parses() {
@@ -263,5 +357,25 @@ mod tests {
         let cli = Cli::try_parse_from(["guard-rail-engine"]).unwrap();
         let command = cli.command.unwrap_or_default();
         assert!(matches!(command, Command::Serve));
+    }
+
+    #[test]
+    fn test_production_admin_listener_rejects_default_token() {
+        let cfg = test_config("production", true, "change-me");
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("invalid admin token"));
+    }
+
+    #[test]
+    fn test_production_admin_listener_rejects_empty_token() {
+        let cfg = test_config("production", true, "   ");
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("invalid admin token"));
+    }
+
+    #[test]
+    fn test_development_allows_default_token() {
+        let cfg = test_config("development", true, "change-me");
+        assert!(validate_startup_security(&cfg).is_ok());
     }
 }

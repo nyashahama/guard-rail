@@ -8,16 +8,58 @@ pub enum RouteAuthMode {
     TenantBound,
 }
 
+#[derive(Debug)]
+pub struct UpstreamSecurityError {
+    pub route_id: String,
+    pub upstream: String,
+}
+
+impl std::fmt::Display for UpstreamSecurityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Route '{}' uses insecure upstream '{}' (must be https)",
+            self.route_id, self.upstream
+        )
+    }
+}
+
+pub struct RouteValidator;
+
+impl RouteValidator {
+    pub fn validate_upstream_security(
+        routes: &RouteTable,
+        environment: crate::config::RuntimeEnvironment,
+    ) -> Result<(), UpstreamSecurityError> {
+        if !matches!(environment, crate::config::RuntimeEnvironment::Production) {
+            return Ok(());
+        }
+
+        for route in routes.iter() {
+            let is_https = reqwest::Url::parse(&route.upstream)
+                .ok()
+                .is_some_and(|url| url.scheme() == "https");
+            if !is_https {
+                return Err(UpstreamSecurityError {
+                    route_id: route.id.clone(),
+                    upstream: route.upstream.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RoutesConfig {
     pub routes: Vec<Route>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
+#[serde(deny_unknown_fields)]
 pub struct Route {
     pub id: String,
-    #[allow(dead_code)]
-    pub path: String,
     pub auth_mode: RouteAuthMode,
     pub upstream: String,
     pub methods: Vec<String>,
@@ -28,6 +70,26 @@ pub struct Route {
 
 fn default_timeout() -> u64 {
     5000
+}
+
+impl Route {
+    #[allow(dead_code)]
+    pub fn new(
+        id: String,
+        auth_mode: RouteAuthMode,
+        upstream: String,
+        methods: Vec<String>,
+        policies: Vec<String>,
+    ) -> Self {
+        Self {
+            id,
+            auth_mode,
+            upstream,
+            methods,
+            policies,
+            timeout_ms: 5000,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -105,7 +167,6 @@ mod tests {
             r#"
 routes:
   - id: missing-auth-mode
-    path: /v1/execute/missing-auth-mode
     upstream: https://example.com
     methods: [POST]
     policies: []
@@ -120,7 +181,6 @@ routes:
     fn test_validate_route_auth_state_allows_unbound_tenant_bound_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "bootstrap-route".into(),
-            path: "/v1/execute/bootstrap-route".into(),
             auth_mode: RouteAuthMode::TenantBound,
             upstream: "http://upstream".into(),
             methods: vec!["POST".into()],
@@ -136,7 +196,6 @@ routes:
     fn test_validate_route_auth_state_rejects_bound_public_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "open-route".into(),
-            path: "/v1/execute/open-route".into(),
             auth_mode: RouteAuthMode::Public,
             upstream: "http://upstream".into(),
             methods: vec!["POST".into()],
@@ -162,14 +221,12 @@ routes:
             r#"
 routes:
   - id: transfer-api
-    path: /v1/execute/transfer-api
     auth_mode: public
     upstream: https://bank.za/api/transfer
     methods: [POST, PUT]
     policies: [block-callbacks]
     timeout_ms: 3000
   - id: partner
-    path: /v1/execute/partner
     auth_mode: tenant_bound
     upstream: https://erp.internal/webhook
     methods: [POST]
@@ -194,7 +251,6 @@ routes:
             r#"
 routes:
   - id: test
-    path: /v1/execute/test
     auth_mode: public
     upstream: https://example.com
     methods: [POST]
@@ -212,13 +268,11 @@ routes:
             r#"
 routes:
   - id: dup
-    path: /v1/execute/dup
     auth_mode: public
     upstream: https://a.com
     methods: [POST]
     policies: []
   - id: dup
-    path: /v1/execute/dup2
     auth_mode: public
     upstream: https://b.com
     methods: [POST]
@@ -236,13 +290,11 @@ routes:
             r#"
 routes:
   - id: a
-    path: /v1/execute/a
     auth_mode: public
     upstream: https://a.com
     methods: [POST]
     policies: [pol-a, pol-b]
   - id: b
-    path: /v1/execute/b
     auth_mode: tenant_bound
     upstream: https://b.com
     methods: [POST]
@@ -260,7 +312,6 @@ routes:
             r#"
 routes:
   - id: test
-    path: /v1/execute/test
     auth_mode: public
     upstream: https://example.com
     methods: [POST]
@@ -278,7 +329,6 @@ routes:
     fn test_validate_all_routes_bound_returns_error_for_unbound_route() {
         let routes = RouteTable::from_routes(vec![Route {
             id: "test-route".to_string(),
-            path: "/v1/execute/test-route".to_string(),
             auth_mode: RouteAuthMode::TenantBound,
             upstream: "http://upstream".to_string(),
             methods: vec!["POST".to_string()],
@@ -289,5 +339,42 @@ routes:
         let snapshot = crate::tenant::cache::TenantAuthSnapshot::default();
         let err = crate::tenant::cache::validate_all_routes_bound(&routes, &snapshot).unwrap_err();
         assert!(err.contains("test-route"));
+    }
+
+    #[test]
+    fn test_path_field_is_rejected() {
+        let tmp = write_yaml(
+            r#"
+routes:
+  - id: legacy-route
+    path: /v1/execute/legacy-route
+    auth_mode: public
+    upstream: https://example.com
+    methods: [POST]
+    policies: []
+"#,
+        );
+
+        let err = RouteTable::load(tmp.path()).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+        assert!(err.to_string().contains("path"));
+    }
+
+    #[test]
+    fn test_non_https_upstream_rejected_in_production() {
+        let routes = RouteTable::from_routes(vec![Route::new(
+            "insecure".to_string(),
+            RouteAuthMode::Public,
+            "ftp://example.com/path".to_string(),
+            vec!["POST".to_string()],
+            vec![],
+        )]);
+
+        let err = RouteValidator::validate_upstream_security(
+            &routes,
+            crate::config::RuntimeEnvironment::Production,
+        )
+        .unwrap_err();
+        assert_eq!(err.route_id, "insecure");
     }
 }

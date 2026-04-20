@@ -96,7 +96,6 @@ async fn start_stage2_test_app() -> Stage2TestHarness {
             r#"
 routes:
   - id: test-route
-    path: /v1/execute/test-route
     auth_mode: public
     upstream: {upstream}/api/target
     methods: [POST]
@@ -179,6 +178,8 @@ policies:
 
 struct AuditRouterHarness {
     app: axum::Router,
+    tenant_id: uuid::Uuid,
+    tenant_key: String,
     _db_guard: TestDatabaseGuard,
 }
 
@@ -194,14 +195,17 @@ async fn build_test_router_with_audit_store() -> AuditRouterHarness {
     reset_test_database(&pool).await;
 
     let audit_store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
-        pool,
+        pool.clone(),
         std::time::Duration::from_millis(250),
     );
+    let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
+    let tenant = repo.create_tenant("audit-tenant").await.unwrap();
+    let key = repo.create_api_key(tenant.id, "audit-key").await.unwrap();
+    let tenant_cache = guard_rail_engine::tenant::cache::TenantAuthCache::default();
+    tenant_cache
+        .replace(repo.load_auth_snapshot().await.unwrap())
+        .await;
 
-    let dummy_pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy("postgres://localhost:5432/test")
-        .unwrap();
     let state = guard_rail_engine::proxy::AppState {
         routes: std::sync::Arc::new(tokio::sync::RwLock::new(
             guard_rail_engine::routes::RouteTable::load(std::path::Path::new(
@@ -224,10 +228,8 @@ async fn build_test_router_with_audit_store() -> AuditRouterHarness {
         route_config_hash: guard_rail_engine::audit::hash::hash_string("routes.yaml"),
         policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
         admin_token: "stage2-admin-token".to_string(),
-        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
-            dummy_pool.clone(),
-        ),
-        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        tenant_repo: repo,
+        tenant_cache,
         rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
         replay: guard_rail_engine::config::ReplayConfig::default(),
     };
@@ -239,6 +241,8 @@ async fn build_test_router_with_audit_store() -> AuditRouterHarness {
             1_048_576,
             &guard_rail_engine::config::ObservabilityConfig::default(),
         ),
+        tenant_id: tenant.id,
+        tenant_key: key.raw_key,
         _db_guard: db_guard,
     }
 }
@@ -261,7 +265,7 @@ async fn build_test_router_with_seeded_audit_rows() -> AuditRouterHarness {
             execution_id: execution_id.to_string(),
             execution_started_at: chrono::Utc::now(),
             route_id: "test-route".to_string(),
-            tenant_id: None,
+            tenant_id: Some(harness.tenant_id),
             api_key_id: None,
             auth_outcome: None,
             upstream_url: Some("http://upstream.test/api".to_string()),
@@ -455,7 +459,7 @@ async fn test_audit_list_returns_newest_first() {
 
     let req = axum::http::Request::builder()
         .uri("/v1/audit/executions?limit=2")
-        .header("authorization", "Bearer stage2-admin-token")
+        .header("authorization", format!("Bearer {}", harness.tenant_key))
         .body(axum::body::Body::empty())
         .unwrap();
 
@@ -519,13 +523,11 @@ async fn start_stage3_test_app(requests_per_minute: u32, burst: u32) -> Stage3Te
             r#"
 routes:
   - id: test-route
-    path: /v1/execute/test-route
     auth_mode: tenant_bound
     upstream: {upstream}/tenant-a
     methods: [POST]
     policies: []
   - id: tenant-b-route
-    path: /v1/execute/tenant-b-route
     auth_mode: tenant_bound
     upstream: {upstream}/tenant-b
     methods: [POST]
@@ -666,19 +668,19 @@ async fn test_tenant_audit_detail_for_other_tenant_returns_404() {
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
-    let admin_list: serde_json::Value = reqwest::Client::new()
+    let tenant_b_list: serde_json::Value = reqwest::Client::new()
         .get(format!(
             "{}/v1/audit/executions?tenant_id={}",
             harness.base_url, harness.tenant_b_id
         ))
-        .header("authorization", "Bearer stage2-admin-token")
+        .header("authorization", format!("Bearer {}", harness.tenant_b_key))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let tenant_b_execution_id = admin_list["items"][0]["execution_id"].as_str().unwrap();
+    let tenant_b_execution_id = tenant_b_list["items"][0]["execution_id"].as_str().unwrap();
 
     let response = reqwest::Client::new()
         .get(format!(

@@ -44,14 +44,12 @@ async fn start_test_app(upstream_url: &str) -> (String, TempDir) {
             r#"
 routes:
   - id: test-route
-    path: /v1/execute/test-route
     auth_mode: public
     upstream: {upstream_url}/api/target
     methods: [POST]
     policies: [block-callbacks, size-limit]
     timeout_ms: 5000
   - id: open-route
-    path: /v1/execute/open-route
     auth_mode: public
     upstream: {upstream_url}/api/open
     methods: [POST, PUT]
@@ -166,9 +164,8 @@ async fn build_test_router_without_audit_store() -> axum::Router {
         replay: guard_rail_engine::config::ReplayConfig::default(),
     };
 
-    guard_rail_engine::proxy::build_router(
+    guard_rail_engine::proxy::build_main_router(
         state,
-        "stage2-admin-token".to_string(),
         1_048_576,
         &guard_rail_engine::config::ObservabilityConfig::default(),
     )
@@ -299,4 +296,42 @@ async fn test_audit_list_requires_admin_token() {
     let response = app.oneshot(req).await.unwrap();
 
     assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_main_router_rejects_admin_token_for_audit_list() {
+    let app = build_test_router_without_audit_store().await;
+
+    let req = axum::http::Request::builder()
+        .uri("/v1/audit/executions")
+        .header("authorization", "Bearer stage2-admin-token")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_main_router_does_not_expose_admin_routes() {
+    let app = build_test_router_without_audit_store().await;
+
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/admin/tenants")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        axum::http::StatusCode::NOT_FOUND,
+        "unexpected status={}, body={}",
+        status,
+        String::from_utf8_lossy(&body)
+    );
 }
