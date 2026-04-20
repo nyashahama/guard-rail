@@ -1,7 +1,7 @@
 export function Footer() {
   return (
     <footer
-      className="relative z-[1] flex items-center justify-between px-20 py-10"
+      className="relative z-[1] mx-auto flex w-full max-w-[1400px] flex-col items-start gap-6 px-6 py-8 sm:px-8 sm:py-10 lg:px-20 md:flex-row md:items-center md:justify-between"
       style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
     >
       <a
@@ -14,9 +14,9 @@ export function Footer() {
         Guard Rail
       </a>
 
-      <ul className="flex gap-6 list-none">
+      <ul className="flex list-none flex-wrap gap-x-6 gap-y-3">
         {[
-          { label: "Cape Town, ZAF", href: "#" },
+          { label: "Overview", href: "#" },
           { label: "Privacy", href: "#" },
           { label: "System Status", href: "#" },
           { label: "Contact", href: "mailto:founders@guardrail.co.za" },
@@ -32,7 +32,7 @@ export function Footer() {
         ))}
       </ul>
 
-      <span className="font-mono text-[10px] text-white/20">
+      <span className="font-mono text-[10px] text-white/20 md:text-right">
         © 2025 Guard Rail Systems (Pty) Ltd.
       </span>
     </footer>

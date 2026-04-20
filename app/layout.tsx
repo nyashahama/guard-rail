@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Guard Rail — Zero-Trust Payload Inspection for Enterprise Automation",
+  title: "Guard Rail | Policy Enforcement for Automation Workflows",
   description:
-    "The enterprise-grade runtime engine. Sandboxing partner integrations, workflows, and AI agents for South Africa's critical financial infrastructure.",
+    "Inspect untrusted requests and enforce execution policy across integrations, workflows, and AI agents.",
 };
 
 export default function RootLayout({
