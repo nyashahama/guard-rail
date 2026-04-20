@@ -42,6 +42,26 @@ This document contains operational procedures for common scenarios.
 
 ---
 
+## Readiness Down
+
+**Symptoms:** `GuardRailReadinessDown` fires and `/ready` returns non-200 responses.
+
+**Immediate Checks:**
+1. Check `/ready`: `curl -i http://localhost:8080/ready`
+2. Check readiness metrics: `guardrail_readiness` and `guardrail_readiness_failures_total`
+3. Check recent shutdown and reload events in logs
+
+**Mitigation:**
+1. If cause is `database_unavailable`, follow the **Database Outage** runbook
+2. If cause is lifecycle draining during deploy, validate rollout health and finish/rollback deploy
+3. Restart the instance if it is stuck in a non-ready state unexpectedly
+
+**Recovery Verification:**
+1. `/ready` returns 200 consistently
+2. `guardrail_readiness` returns to `1`
+
+---
+
 ## Rotate Admin Token
 
 **Symptoms:** Admin token needs to be rotated for security.
@@ -55,7 +75,7 @@ This document contains operational procedures for common scenarios.
 3. For container: update secret and restart
 
 **Recovery Verification:**
-1. Test new token: `curl -H "Authorization: Bearer <new-token>" http://localhost:8081/metrics`
+1. Test new token: `curl -H "Authorization: Bearer <new-token>" http://localhost:8081/v1/admin/tenants`
 2. Verify old token is rejected
 
 ---
@@ -96,6 +116,46 @@ This document contains operational procedures for common scenarios.
 
 ---
 
+## Audit Persistence Failures
+
+**Symptoms:** `GuardRailAuditPersistenceFailures` alert is firing and `guardrail_audit_persist_failures_total` is increasing.
+
+**Immediate Checks:**
+1. Check runtime logs for `failed to persist execution` and `failed to persist execution bundle`
+2. Check database health and connectivity
+3. Check whether failures are continuous or bursty
+
+**Mitigation:**
+1. If DB connectivity is degraded, follow **Database Outage**
+2. If failures are tied to a recent rollout, rollback and re-check
+3. If failures are sustained, temporarily reduce traffic while resolving DB/write-path errors
+
+**Recovery Verification:**
+1. `guardrail_audit_persist_failures_total` stops increasing
+2. New execution rows are present in `execution_audit`
+
+---
+
+## Replay Persistence Failures
+
+**Symptoms:** `GuardRailReplayPersistenceFailures` alert is firing and `guardrail_replay_persist_failures_total` is increasing.
+
+**Immediate Checks:**
+1. Check runtime logs for replay bundle persistence errors
+2. Check DB health and storage capacity
+3. Confirm whether replay capture is enabled in config
+
+**Mitigation:**
+1. If DB path is degraded, follow **Database Outage**
+2. If failures are new after rollout, rollback and compare config changes
+3. Reduce replay capture pressure if needed while restoring DB health
+
+**Recovery Verification:**
+1. `guardrail_replay_persist_failures_total` stops increasing
+2. New replay artifacts are persisted successfully
+
+---
+
 ## Upstream Outage
 
 **Symptoms:** High `guardrail_upstream_failures_total`, requests returning 502/503.
@@ -112,6 +172,26 @@ This document contains operational procedures for common scenarios.
 **Recovery Verification:**
 1. Request rate returns to normal
 2. Upstream failure rate drops to near-zero
+
+---
+
+## Auth Rejection Spike
+
+**Symptoms:** `GuardRailAuthRejectionSpike` alert is firing and `guardrail_auth_rejections_total` grows quickly.
+
+**Immediate Checks:**
+1. Break down by reason label: `sum by (reason) (increase(guardrail_auth_rejections_total[5m]))`
+2. Confirm whether spike is from a single tenant, route, or client rollout
+3. Check recent tenant key rotation or route-binding changes
+
+**Mitigation:**
+1. If `missing_api_key` or `invalid_api_key` dominates, coordinate client credential fix
+2. If `tenant_route_mismatch` dominates, validate route bindings and tenant config
+3. If `rate_limited` dominates, review traffic spike and tenant quotas
+
+**Recovery Verification:**
+1. Auth rejection increase returns to baseline
+2. Expected request success rates recover
 
 ---
 

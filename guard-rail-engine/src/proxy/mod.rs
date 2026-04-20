@@ -691,6 +691,7 @@ pub async fn handle_execute(
     .await
     {
         Ok(result) => {
+            let forward_elapsed = forward_start.elapsed();
             let record = ExecutionRecord {
                 execution_id: execution_id.clone(),
                 execution_started_at,
@@ -717,7 +718,7 @@ pub async fn handle_execute(
                 upstream_status: Some(result.status),
                 forward_error: None,
                 latency_inspect_us,
-                latency_forward_ms: Some(forward_start.elapsed().as_millis()),
+                latency_forward_ms: Some(forward_elapsed.as_millis()),
                 latency_total_ms: total_start.elapsed().as_millis(),
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
@@ -726,7 +727,7 @@ pub async fn handle_execute(
                 metrics.record_upstream_latency(
                     &route_id,
                     &method_str,
-                    forward_start.elapsed().as_secs_f64(),
+                    forward_elapsed.as_secs_f64(),
                 );
             }
             record_execution_metric(
@@ -780,6 +781,7 @@ pub async fn handle_execute(
             result.response
         }
         Err(e) => {
+            let forward_elapsed = forward_start.elapsed();
             let record = ExecutionRecord {
                 execution_id: execution_id.clone(),
                 execution_started_at,
@@ -806,7 +808,7 @@ pub async fn handle_execute(
                 upstream_status: None,
                 forward_error: Some(e.clone()),
                 latency_inspect_us,
-                latency_forward_ms: Some(forward_start.elapsed().as_millis()),
+                latency_forward_ms: Some(forward_elapsed.as_millis()),
                 latency_total_ms: total_start.elapsed().as_millis(),
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
@@ -821,6 +823,11 @@ pub async fn handle_execute(
             tracing::Span::current().record("verdict", "UPSTREAM_FAILURE");
             if let Some(metrics) = &state.metrics {
                 metrics.record_upstream_failure(&route_id);
+                metrics.record_upstream_latency(
+                    &route_id,
+                    &method_str,
+                    forward_elapsed.as_secs_f64(),
+                );
             }
             spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             response::bad_gateway_response(&execution_id, &e)

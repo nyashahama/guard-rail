@@ -49,7 +49,7 @@ groups:
           runbook_url: "#auth-rejection-spike"
 
       - alert: GuardRailUpstreamFailures
-        expr: rate(guardrail_upstream_failures_total[5m]) > 0.1
+        expr: sum(rate(guardrail_upstream_failures_total[5m])) / clamp_min(sum(rate(guardrail_requests_total{verdict=~"ALLOWED|UPSTREAM_FAILURE"}[5m])), 0.001) > 0.10
         labels:
           severity: warning
         annotations:
