@@ -3,8 +3,11 @@ set -euo pipefail
 
 : "${TEST_DATABASE_URL:?TEST_DATABASE_URL must be set}"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ENGINE_DIR="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+
 IMAGE_TAG="${IMAGE_TAG:-guard-rail-engine:phase5-smoke}"
-CONFIG_DIR="${CONFIG_DIR:-$(pwd)/deploy/container}"
+CONFIG_DIR="${CONFIG_DIR:-${ENGINE_DIR}/deploy/container}"
 HOST_PORT="${HOST_PORT:-18080}"
 CONTAINER_NAME="guardrail-phase5-serve"
 
@@ -14,12 +17,12 @@ cleanup() {
 
 trap cleanup EXIT
 
-docker build -t "${IMAGE_TAG}" .
+docker build -t "${IMAGE_TAG}" "${ENGINE_DIR}"
 
 test "$(docker image inspect "${IMAGE_TAG}" --format '{{.Config.User}}')" = "guardrail:guardrail"
 test "$(docker image inspect "${IMAGE_TAG}" --format '{{json .Config.Healthcheck}}')" != "null"
 
-docker run --rm "${IMAGE_TAG}" sh -lc 'test ! -e /srv/guard-rail-engine/config/config.yaml'
+docker run --rm --entrypoint /bin/sh "${IMAGE_TAG}" -lc 'test ! -e /srv/guard-rail-engine/config/config.yaml'
 
 docker run --rm \
   -v "${CONFIG_DIR}:/etc/guard-rail-engine:ro" \
