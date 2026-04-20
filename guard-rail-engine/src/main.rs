@@ -86,10 +86,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pool = storage::postgres::connect_pool(&app_config.database).await?;
             storage::postgres::assert_schema_ready(&pool).await?;
 
-            let manager = storage::retention::RetentionManager::new(
-                pool,
-                app_config.data_ops.clone(),
-            );
+            let manager =
+                storage::retention::RetentionManager::new(pool, app_config.data_ops.clone());
 
             if apply {
                 let result = manager.apply().await?;

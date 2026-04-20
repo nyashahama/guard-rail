@@ -202,10 +202,7 @@ async fn test_cleanup_apply_prunes_old_rows_and_preserves_integrity_boundary() {
     assert_eq!(result.deleted_execution_artifacts, 1);
     assert_eq!(result.deleted_replay_runs, 1);
     assert_eq!(result.deleted_policy_snapshots, 1);
-    assert_eq!(
-        result.boundary_execution_id.as_deref(),
-        Some("GR-KEEP-1")
-    );
+    assert_eq!(result.boundary_execution_id.as_deref(), Some("GR-KEEP-1"));
 
     let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
         harness.pool.clone(),

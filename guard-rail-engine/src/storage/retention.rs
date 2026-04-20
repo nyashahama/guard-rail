@@ -32,10 +32,13 @@ impl RetentionManager {
 
     pub async fn preview(&self) -> Result<CleanupPreview, sqlx::Error> {
         let now = chrono::Utc::now();
-        let replay_cutoff = now - chrono::Duration::days(self.config.replay_run_retention_days as i64);
-        let artifact_cutoff = now - chrono::Duration::days(self.config.artifact_retention_days as i64);
+        let replay_cutoff =
+            now - chrono::Duration::days(self.config.replay_run_retention_days as i64);
+        let artifact_cutoff =
+            now - chrono::Duration::days(self.config.artifact_retention_days as i64);
         let audit_cutoff = now - chrono::Duration::days(self.config.audit_retention_days as i64);
-        let snapshot_cutoff = now - chrono::Duration::days(self.config.orphan_snapshot_retention_days as i64);
+        let snapshot_cutoff =
+            now - chrono::Duration::days(self.config.orphan_snapshot_retention_days as i64);
 
         Ok(CleanupPreview {
             replay_runs: sqlx::query_scalar("select count(*) from replay_runs where created_at < $1")
@@ -62,10 +65,13 @@ impl RetentionManager {
 
     pub async fn apply(&self) -> Result<CleanupResult, sqlx::Error> {
         let now = chrono::Utc::now();
-        let replay_cutoff = now - chrono::Duration::days(self.config.replay_run_retention_days as i64);
-        let artifact_cutoff = now - chrono::Duration::days(self.config.artifact_retention_days as i64);
+        let replay_cutoff =
+            now - chrono::Duration::days(self.config.replay_run_retention_days as i64);
+        let artifact_cutoff =
+            now - chrono::Duration::days(self.config.artifact_retention_days as i64);
         let audit_cutoff = now - chrono::Duration::days(self.config.audit_retention_days as i64);
-        let snapshot_cutoff = now - chrono::Duration::days(self.config.orphan_snapshot_retention_days as i64);
+        let snapshot_cutoff =
+            now - chrono::Duration::days(self.config.orphan_snapshot_retention_days as i64);
 
         let mut tx = self.pool.begin().await?;
 
@@ -155,12 +161,14 @@ impl RetentionManager {
                 boundary_execution_id = Some(next_execution_id);
             }
 
-            deleted_audit_rows = sqlx::query("delete from execution_audit where id <= $1 and execution_started_at < $2")
-                .bind(last_deleted_id)
-                .bind(audit_cutoff)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected() as i64;
+            deleted_audit_rows = sqlx::query(
+                "delete from execution_audit where id <= $1 and execution_started_at < $2",
+            )
+            .bind(last_deleted_id)
+            .bind(audit_cutoff)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
         }
 
         tx.commit().await?;

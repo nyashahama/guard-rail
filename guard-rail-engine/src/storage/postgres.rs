@@ -333,7 +333,9 @@ impl PostgresAuditStore {
             builder.push(" and verdict = ").push_bind(verdict);
         }
         if let Some(from) = query.from {
-            builder.push(" and execution_started_at >= ").push_bind(from);
+            builder
+                .push(" and execution_started_at >= ")
+                .push_bind(from);
         }
         if let Some(to) = query.to {
             builder.push(" and execution_started_at <= ").push_bind(to);
@@ -361,7 +363,9 @@ impl PostgresAuditStore {
              violation_value_preview, upstream_status, forward_error, latency_inspect_us, latency_forward_ms, \
              latency_total_ms, route_config_hash, policy_set_hash, previous_hash, record_hash";
 
-        let mut select = QueryBuilder::<sqlx::Postgres>::new(format!("select {column_list} from execution_audit"));
+        let mut select = QueryBuilder::<sqlx::Postgres>::new(format!(
+            "select {column_list} from execution_audit"
+        ));
         Self::push_audit_filters(&query, effective_tenant_id, &mut select);
         select
             .push(" order by execution_started_at ")

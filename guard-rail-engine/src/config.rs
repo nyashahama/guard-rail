@@ -269,11 +269,21 @@ pub struct DataOpsConfig {
     pub cleanup_batch_size: u32,
 }
 
-fn default_audit_retention_days() -> u32 { 180 }
-fn default_artifact_retention_days() -> u32 { 30 }
-fn default_replay_run_retention_days() -> u32 { 30 }
-fn default_orphan_snapshot_retention_days() -> u32 { 30 }
-fn default_cleanup_batch_size() -> u32 { 1000 }
+fn default_audit_retention_days() -> u32 {
+    180
+}
+fn default_artifact_retention_days() -> u32 {
+    30
+}
+fn default_replay_run_retention_days() -> u32 {
+    30
+}
+fn default_orphan_snapshot_retention_days() -> u32 {
+    30
+}
+fn default_cleanup_batch_size() -> u32 {
+    1000
+}
 
 impl Default for DataOpsConfig {
     fn default() -> Self {
