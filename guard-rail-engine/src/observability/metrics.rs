@@ -1,5 +1,6 @@
 use prometheus::{
-    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry,
+    TextEncoder,
 };
 
 pub struct Metrics {
@@ -238,9 +239,7 @@ impl Metrics {
     }
 
     pub fn record_reload_event(&self, outcome: &str) {
-        self.reload_events_total
-            .with_label_values(&[outcome])
-            .inc();
+        self.reload_events_total.with_label_values(&[outcome]).inc();
     }
 
     pub fn record_reload_success_now(&self) {
@@ -254,6 +253,7 @@ impl Metrics {
             .inc();
     }
 
+    #[allow(dead_code)]
     pub fn record_policy_and_upstream_latency(
         &self,
         route_id: &str,

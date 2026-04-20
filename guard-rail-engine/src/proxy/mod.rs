@@ -609,9 +609,14 @@ pub async fn handle_execute(
                     response_body_truncated: false,
                 };
                 if let Some(metrics) = &state.metrics {
-                metrics.record_policy_latency(&route_id, &method_str, "BLOCKED", latency_inspect_seconds);
-            }
-            record_execution_metric(
+                    metrics.record_policy_latency(
+                        &route_id,
+                        &method_str,
+                        "BLOCKED",
+                        latency_inspect_seconds,
+                    );
+                }
+                record_execution_metric(
                     state.metrics.as_ref(),
                     &route_id,
                     &method_str,
@@ -628,8 +633,13 @@ pub async fn handle_execute(
                 );
             } else {
                 if let Some(metrics) = &state.metrics {
-                metrics.record_policy_latency(&route_id, &method_str, "BLOCKED", latency_inspect_seconds);
-            }
+                    metrics.record_policy_latency(
+                        &route_id,
+                        &method_str,
+                        "BLOCKED",
+                        latency_inspect_seconds,
+                    );
+                }
                 record_execution_metric(
                     state.metrics.as_ref(),
                     &route_id,
@@ -644,7 +654,12 @@ pub async fn handle_execute(
         }
         Verdict::Allow => {
             if let Some(metrics) = &state.metrics {
-                metrics.record_policy_latency(&route_id, &method_str, "ALLOWED", latency_inspect_seconds);
+                metrics.record_policy_latency(
+                    &route_id,
+                    &method_str,
+                    "ALLOWED",
+                    latency_inspect_seconds,
+                );
             }
         }
     }
@@ -708,7 +723,11 @@ pub async fn handle_execute(
                 policy_set_hash: state.policy_set_hash.clone(),
             };
             if let Some(metrics) = &state.metrics {
-                metrics.record_upstream_latency(&route_id, &method_str, forward_start.elapsed().as_secs_f64());
+                metrics.record_upstream_latency(
+                    &route_id,
+                    &method_str,
+                    forward_start.elapsed().as_secs_f64(),
+                );
             }
             record_execution_metric(
                 state.metrics.as_ref(),
