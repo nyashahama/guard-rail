@@ -44,14 +44,12 @@ async fn start_test_app(upstream_url: &str) -> (String, TempDir) {
             r#"
 routes:
   - id: test-route
-    path: /v1/execute/test-route
     auth_mode: public
     upstream: {upstream_url}/api/target
     methods: [POST]
     policies: [block-callbacks, size-limit]
     timeout_ms: 5000
   - id: open-route
-    path: /v1/execute/open-route
     auth_mode: public
     upstream: {upstream_url}/api/open
     methods: [POST, PUT]

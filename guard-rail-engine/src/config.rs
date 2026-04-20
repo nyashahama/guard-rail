@@ -47,7 +47,7 @@ pub struct AppConfig {
     pub observability: ObservabilityConfig,
     #[serde(default)]
     pub shutdown: ShutdownConfig,
-    #[serde(flatten,default)]
+    #[serde(flatten, default)]
     _extra: serde_yaml::Value,
 }
 
@@ -284,9 +284,6 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_ADMIN__TOKEN") {
             config.admin.token = val;
         }
-        if std::env::var("GUARDRAIL_TENANT_AUTH__HEADER_NAME").is_ok() {
-            return Err("tenant_auth is no longer supported in config".into());
-        }
         if let Ok(val) = std::env::var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE") {
             config.rate_limit.requests_per_minute = val.parse()?;
         }
@@ -502,7 +499,6 @@ database:
 audit: {}
 admin:
   token: "stage2-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay:
   enabled: true
@@ -536,7 +532,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 observability:
@@ -574,7 +569,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 "#;
@@ -608,7 +602,6 @@ database:
 audit: {}
 admin:
   token: "stage-admin-token"
-tenant_auth: {}
 rate_limit: {}
 replay: {}
 observability: {}
@@ -688,8 +681,7 @@ database:
   url: "postgres://guardrail:secret@localhost:5432/guardrail"
 audit: {}
 admin:
-  token: "from-config"
-tenant_auth: {}
+  token: "stage-admin-token"
 rate_limit: {}
 "#;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -703,7 +695,6 @@ rate_limit: {}
             std::env::set_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS", "20");
             std::env::set_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS", "400");
             std::env::set_var("GUARDRAIL_ADMIN__TOKEN", "from-env");
-            std::env::set_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME", "x-custom-auth");
             std::env::set_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE", "200");
             std::env::set_var("GUARDRAIL_RATE_LIMIT__BURST", "50");
         }

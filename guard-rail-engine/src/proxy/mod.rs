@@ -887,10 +887,7 @@ pub fn build_main_router(
     main_router.with_state(state)
 }
 
-pub fn build_admin_router(
-    state: AppState,
-    admin_token: String,
-) -> axum::Router {
+pub fn build_admin_router(state: AppState, admin_token: String) -> axum::Router {
     let audit_admin_routes = axum::Router::new()
         .route(
             "/v1/audit/integrity",
@@ -961,9 +958,7 @@ pub fn build_admin_router(
             crate::auth::middleware::require_admin_token,
         ));
 
-    admin_routes
-        .merge(audit_admin_routes)
-        .with_state(state)
+    admin_routes.merge(audit_admin_routes).with_state(state)
 }
 
 #[allow(dead_code)]

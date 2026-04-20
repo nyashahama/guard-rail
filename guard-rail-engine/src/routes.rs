@@ -69,6 +69,26 @@ fn default_timeout() -> u64 {
     5000
 }
 
+impl Route {
+    #[allow(dead_code)]
+    pub fn new(
+        id: String,
+        auth_mode: RouteAuthMode,
+        upstream: String,
+        methods: Vec<String>,
+        policies: Vec<String>,
+    ) -> Self {
+        Self {
+            id,
+            auth_mode,
+            upstream,
+            methods,
+            policies,
+            timeout_ms: 5000,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RouteTable {
     by_id: std::collections::HashMap<String, Route>,

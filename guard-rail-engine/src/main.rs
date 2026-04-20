@@ -86,8 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_route_auth_state(&route_table_for_cache, &auth_snapshot)
         .map_err(|e| format!("Tenant auth validation failed: {}", e))?;
 
-    routes::RouteValidator::validate_upstream_security(&route_table_for_cache, app_config.environment)
-        .map_err(|e| format!("Upstream security validation failed: {}", e))?;
+    routes::RouteValidator::validate_upstream_security(
+        &route_table_for_cache,
+        app_config.environment,
+    )
+    .map_err(|e| format!("Upstream security validation failed: {}", e))?;
 
     let tenant_cache = TenantAuthCache::default();
     tenant_cache.replace(auth_snapshot).await;
@@ -178,10 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &app_config.observability,
     );
 
-    let admin_app = proxy::build_admin_router(
-        state.clone(),
-        app_config.admin.token.clone(),
-    );
+    let admin_app = proxy::build_admin_router(state.clone(), app_config.admin.token.clone());
 
     let main_addr: SocketAddr =
         format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
@@ -193,7 +193,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_handle = if let Some(admin_config) = &app_config.admin_server {
         let admin_addr: SocketAddr =
             format!("{}:{}", admin_config.host, admin_config.port).parse()?;
-        tracing::info!("Guard Rail Engine starting admin listener on {}", admin_addr);
+        tracing::info!(
+            "Guard Rail Engine starting admin listener on {}",
+            admin_addr
+        );
         let admin_listener = TcpListener::bind(admin_addr).await?;
 
         let admin_app = admin_app.into_make_service();
