@@ -43,7 +43,7 @@ export default function Home() {
 
       {/* ── Scroll Indicator (left side) ── */}
       <aside
-        className="fixed left-7 top-1/2 -translate-y-1/2 z-50 flex flex-col items-center gap-3 mix-blend-difference pointer-events-none"
+        className="hidden lg:flex fixed left-7 top-1/2 -translate-y-1/2 z-50 flex-col items-center gap-3 mix-blend-difference pointer-events-none"
       >
         <div className="relative w-px h-20 overflow-hidden" style={{ background: "rgba(255,255,255,0.15)" }}>
           <div
@@ -61,7 +61,7 @@ export default function Home() {
       </aside>
 
       {/* ── Corner Tag ── */}
-      <div className="fixed right-7 bottom-6 z-50 font-mono text-[9px] tracking-[0.2em] uppercase text-white/25 mix-blend-difference">
+      <div className="hidden sm:block fixed right-7 bottom-6 z-50 font-mono text-[9px] tracking-[0.2em] uppercase text-white/25 mix-blend-difference">
         ZAF / Enterprise Auth
       </div>
 
