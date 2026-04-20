@@ -694,3 +694,46 @@ async fn test_tenant_audit_detail_for_other_tenant_returns_404() {
 
     assert_eq!(response.status(), 404);
 }
+
+#[tokio::test]
+async fn test_audit_integrity_endpoint_reports_tampered_chain() {
+    let harness = build_test_router_with_seeded_audit_rows().await;
+
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::query(
+        r#"
+        update execution_audit
+        set previous_hash = 'tampered-hash'
+        where execution_id = $1
+        "#,
+    )
+    .bind("GR-EXE-2")
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let req = axum::http::Request::builder()
+        .uri("/v1/audit/integrity?from_execution_id=GR-EXE-1&to_execution_id=GR-EXE-3")
+        .header("authorization", "Bearer stage2-admin-token")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = harness.app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["chain_valid"], false);
+    assert_eq!(json["first_invalid_record"], "GR-EXE-2");
+    assert_eq!(json["checked_from"], "GR-EXE-1");
+    assert_eq!(json["checked_to"], "GR-EXE-3");
+}
