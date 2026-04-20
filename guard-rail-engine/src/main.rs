@@ -13,6 +13,8 @@ mod shutdown;
 mod storage;
 mod tenant;
 
+pub use routes::RouteAuthMode;
+
 use audit::hash::hash_string;
 use clap::Parser;
 use proxy::AppState;
@@ -30,6 +32,10 @@ enum Command {
     #[default]
     Serve,
     Migrate,
+    Cleanup {
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+    },
 }
 
 #[derive(Parser)]
@@ -74,6 +80,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pool = storage::postgres::connect_pool(&app_config.database).await?;
             storage::postgres::run_migrations(&pool).await?;
             println!("Migrations applied successfully");
+            return Ok(());
+        }
+        Command::Cleanup { apply } => {
+            let pool = storage::postgres::connect_pool(&app_config.database).await?;
+            storage::postgres::assert_schema_ready(&pool).await?;
+
+            let manager =
+                storage::retention::RetentionManager::new(pool, app_config.data_ops.clone());
+
+            if apply {
+                let result = manager.apply().await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let preview = manager.preview().await?;
+                println!("{}", serde_json::to_string_pretty(&preview)?);
+            }
+
             return Ok(());
         }
         Command::Serve => {
@@ -377,5 +400,38 @@ rate_limit: {{}}
     fn test_development_allows_default_token() {
         let cfg = test_config("development", true, "change-me");
         assert!(validate_startup_security(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_cleanup_command_parses_without_apply() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "cleanup",
+            "--config",
+            "./config/config.yaml",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Cleanup { apply: false })
+        ));
+    }
+
+    #[test]
+    fn test_cleanup_command_parses_with_apply_flag() {
+        let cli = Cli::try_parse_from([
+            "guard-rail-engine",
+            "cleanup",
+            "--config",
+            "./config/config.yaml",
+            "--apply",
+        ])
+        .unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Cleanup { apply: true })
+        ));
     }
 }

@@ -47,6 +47,8 @@ pub struct AppConfig {
     pub observability: ObservabilityConfig,
     #[serde(default)]
     pub shutdown: ShutdownConfig,
+    #[serde(default)]
+    pub data_ops: DataOpsConfig,
     #[serde(flatten, default)]
     _extra: serde_yaml::Value,
 }
@@ -253,6 +255,48 @@ impl Default for ShutdownConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataOpsConfig {
+    #[serde(default = "default_audit_retention_days")]
+    pub audit_retention_days: u32,
+    #[serde(default = "default_artifact_retention_days")]
+    pub artifact_retention_days: u32,
+    #[serde(default = "default_replay_run_retention_days")]
+    pub replay_run_retention_days: u32,
+    #[serde(default = "default_orphan_snapshot_retention_days")]
+    pub orphan_snapshot_retention_days: u32,
+    #[serde(default = "default_cleanup_batch_size")]
+    pub cleanup_batch_size: u32,
+}
+
+fn default_audit_retention_days() -> u32 {
+    180
+}
+fn default_artifact_retention_days() -> u32 {
+    30
+}
+fn default_replay_run_retention_days() -> u32 {
+    30
+}
+fn default_orphan_snapshot_retention_days() -> u32 {
+    30
+}
+fn default_cleanup_batch_size() -> u32 {
+    1000
+}
+
+impl Default for DataOpsConfig {
+    fn default() -> Self {
+        Self {
+            audit_retention_days: default_audit_retention_days(),
+            artifact_retention_days: default_artifact_retention_days(),
+            replay_run_retention_days: default_replay_run_retention_days(),
+            orphan_snapshot_retention_days: default_orphan_snapshot_retention_days(),
+            cleanup_batch_size: default_cleanup_batch_size(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = std::fs::read_to_string(path)?;
@@ -329,6 +373,21 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_SHUTDOWN__DRAIN_POLL_INTERVAL_MS") {
             config.shutdown.drain_poll_interval_ms = val.parse()?;
         }
+        if let Ok(val) = std::env::var("GUARDRAIL_DATA_OPS__AUDIT_RETENTION_DAYS") {
+            config.data_ops.audit_retention_days = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_DATA_OPS__ARTIFACT_RETENTION_DAYS") {
+            config.data_ops.artifact_retention_days = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_DATA_OPS__REPLAY_RUN_RETENTION_DAYS") {
+            config.data_ops.replay_run_retention_days = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_DATA_OPS__ORPHAN_SNAPSHOT_RETENTION_DAYS") {
+            config.data_ops.orphan_snapshot_retention_days = val.parse()?;
+        }
+        if let Ok(val) = std::env::var("GUARDRAIL_DATA_OPS__CLEANUP_BATCH_SIZE") {
+            config.data_ops.cleanup_batch_size = val.parse()?;
+        }
 
         Ok(config)
     }
@@ -370,6 +429,11 @@ mod tests {
             std::env::remove_var("GUARDRAIL_OBSERVABILITY__READINESS_PROBE_TIMEOUT_MS");
             std::env::remove_var("GUARDRAIL_SHUTDOWN__GRACE_PERIOD_MS");
             std::env::remove_var("GUARDRAIL_SHUTDOWN__DRAIN_POLL_INTERVAL_MS");
+            std::env::remove_var("GUARDRAIL_DATA_OPS__AUDIT_RETENTION_DAYS");
+            std::env::remove_var("GUARDRAIL_DATA_OPS__ARTIFACT_RETENTION_DAYS");
+            std::env::remove_var("GUARDRAIL_DATA_OPS__REPLAY_RUN_RETENTION_DAYS");
+            std::env::remove_var("GUARDRAIL_DATA_OPS__ORPHAN_SNAPSHOT_RETENTION_DAYS");
+            std::env::remove_var("GUARDRAIL_DATA_OPS__CLEANUP_BATCH_SIZE");
         }
     }
 
@@ -755,5 +819,82 @@ rate_limit: {}
 
         let config = AppConfig::load(tmp.path()).unwrap();
         assert_eq!(config.environment, RuntimeEnvironment::Production);
+    }
+
+    #[test]
+    fn test_load_config_with_phase3_data_ops_section() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+rate_limit: {}
+replay: {}
+data_ops:
+  audit_retention_days: 180
+  artifact_retention_days: 30
+  replay_run_retention_days: 30
+  orphan_snapshot_retention_days: 30
+  cleanup_batch_size: 1000
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.data_ops.audit_retention_days, 180);
+        assert_eq!(config.data_ops.artifact_retention_days, 30);
+        assert_eq!(config.data_ops.replay_run_retention_days, 30);
+        assert_eq!(config.data_ops.orphan_snapshot_retention_days, 30);
+        assert_eq!(config.data_ops.cleanup_batch_size, 1000);
+    }
+
+    #[test]
+    fn test_phase3_data_ops_env_overrides() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 9090
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+audit: {}
+admin:
+  token: "stage-admin-token"
+rate_limit: {}
+replay: {}
+data_ops: {}
+"#;
+
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var("GUARDRAIL_DATA_OPS__AUDIT_RETENTION_DAYS", "365");
+            std::env::set_var("GUARDRAIL_DATA_OPS__ARTIFACT_RETENTION_DAYS", "14");
+            std::env::set_var("GUARDRAIL_DATA_OPS__REPLAY_RUN_RETENTION_DAYS", "14");
+            std::env::set_var("GUARDRAIL_DATA_OPS__ORPHAN_SNAPSHOT_RETENTION_DAYS", "14");
+            std::env::set_var("GUARDRAIL_DATA_OPS__CLEANUP_BATCH_SIZE", "250");
+        }
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(config.data_ops.audit_retention_days, 365);
+        assert_eq!(config.data_ops.artifact_retention_days, 14);
+        assert_eq!(config.data_ops.replay_run_retention_days, 14);
+        assert_eq!(config.data_ops.orphan_snapshot_retention_days, 14);
+        assert_eq!(config.data_ops.cleanup_batch_size, 250);
     }
 }

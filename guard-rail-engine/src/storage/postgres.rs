@@ -1,4 +1,4 @@
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, QueryBuilder, Row};
 
 pub use sqlx::postgres::PgPoolOptions;
 
@@ -293,6 +293,7 @@ impl PostgresAuditStore {
         }))
     }
 
+    #[allow(dead_code)]
     pub async fn count_executions(&self) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("select count(*) from execution_audit")
             .fetch_one(&self.pool)
@@ -316,6 +317,32 @@ impl PostgresAuditStore {
         }
     }
 
+    fn push_audit_filters<'a>(
+        query: &'a crate::audit::api::AuditListQuery,
+        effective_tenant_id: Option<uuid::Uuid>,
+        builder: &mut QueryBuilder<'a, sqlx::Postgres>,
+    ) {
+        builder.push(" where 1=1");
+
+        if let Some(tid) = effective_tenant_id {
+            builder.push(" and tenant_id = ").push_bind(tid);
+        }
+        if let Some(route_id) = &query.route_id {
+            builder.push(" and route_id = ").push_bind(route_id);
+        }
+        if let Some(verdict) = &query.verdict {
+            builder.push(" and verdict = ").push_bind(verdict);
+        }
+        if let Some(from) = query.from {
+            builder
+                .push(" and execution_started_at >= ")
+                .push_bind(from);
+        }
+        if let Some(to) = query.to {
+            builder.push(" and execution_started_at <= ").push_bind(to);
+        }
+    }
+
     pub async fn list_executions_for_tenant(
         &self,
         tenant_id: Option<uuid::Uuid>,
@@ -323,55 +350,39 @@ impl PostgresAuditStore {
     ) -> Result<crate::audit::api::AuditListResponse, sqlx::Error> {
         let limit = query.limit.unwrap_or(50).min(1000);
         let offset = query.cursor.unwrap_or(0);
-        let order = query.order.as_deref().unwrap_or("desc");
-
-        let order_sql = if order == "asc" { "ASC" } else { "DESC" };
-
-        let (base_sql, bind_tenant_id) = if let Some(tid) = tenant_id.or(query.tenant_id) {
-            (
-                r#"
-                select
-                    execution_id, execution_started_at, route_id, tenant_id, api_key_id, auth_outcome,
-                    upstream_url, method, source_ip, content_type, user_agent,
-                    had_authorization_header, request_size_bytes, request_body_sha256,
-                    verdict, rejection_reason, matched_policy_name, matched_rule_field,
-                    matched_rule_condition, matched_rule_severity, violation_value_hash,
-                    violation_value_preview, upstream_status, forward_error,
-                    latency_inspect_us, latency_forward_ms, latency_total_ms,
-                    route_config_hash, policy_set_hash, previous_hash, record_hash
-                from execution_audit
-                where tenant_id = $1
-                order by execution_started_at "#,
-                Some(tid),
-            )
+        let order_sql = if query.order.as_deref() == Some("asc") {
+            "ASC"
         } else {
-            (
-                r#"
-                select
-                    execution_id, execution_started_at, route_id, tenant_id, api_key_id, auth_outcome,
-                    upstream_url, method, source_ip, content_type, user_agent,
-                    had_authorization_header, request_size_bytes, request_body_sha256,
-                    verdict, rejection_reason, matched_policy_name, matched_rule_field,
-                    matched_rule_condition, matched_rule_severity, violation_value_hash,
-                    violation_value_preview, upstream_status, forward_error,
-                    latency_inspect_us, latency_forward_ms, latency_total_ms,
-                    route_config_hash, policy_set_hash, previous_hash, record_hash
-                from execution_audit
-                order by execution_started_at "#,
-                None,
-            )
+            "DESC"
         };
+        let effective_tenant_id = tenant_id.or(query.tenant_id);
 
-        let sql = format!(
-            "{} {} limit {} offset {}",
-            base_sql, order_sql, limit, offset
-        );
+        let column_list = "execution_id, execution_started_at, route_id, tenant_id, api_key_id, auth_outcome, \
+             upstream_url, method, source_ip, content_type, user_agent, \
+             had_authorization_header, request_size_bytes, request_body_sha256, verdict, rejection_reason, matched_policy_name, \
+             matched_rule_field, matched_rule_condition, matched_rule_severity, violation_value_hash, \
+             violation_value_preview, upstream_status, forward_error, latency_inspect_us, latency_forward_ms, \
+             latency_total_ms, route_config_hash, policy_set_hash, previous_hash, record_hash";
 
-        let rows = if let Some(tid) = bind_tenant_id {
-            sqlx::query(&sql).bind(tid).fetch_all(&self.pool).await?
-        } else {
-            sqlx::query(&sql).fetch_all(&self.pool).await?
-        };
+        let mut select = QueryBuilder::<sqlx::Postgres>::new(format!(
+            "select {column_list} from execution_audit"
+        ));
+        Self::push_audit_filters(&query, effective_tenant_id, &mut select);
+        select
+            .push(" order by execution_started_at ")
+            .push(order_sql)
+            .push(", id ")
+            .push(order_sql)
+            .push(" limit ")
+            .push_bind(limit)
+            .push(" offset ")
+            .push_bind(offset);
+
+        let rows = select.build().fetch_all(&self.pool).await?;
+
+        let mut count = QueryBuilder::<sqlx::Postgres>::new("select count(*) from execution_audit");
+        Self::push_audit_filters(&query, effective_tenant_id, &mut count);
+        let total: i64 = count.build_query_scalar().fetch_one(&self.pool).await?;
 
         let items: Vec<ExecutionAuditRow> = rows
             .iter()
@@ -411,17 +422,6 @@ impl PostgresAuditStore {
                 record_hash: r.get("record_hash"),
             })
             .collect();
-
-        let total = if let Some(_tid) = bind_tenant_id {
-            sqlx::query_scalar::<_, i64>(
-                "select count(*) from execution_audit where tenant_id = $1",
-            )
-            .bind(bind_tenant_id.unwrap())
-            .fetch_one(&self.pool)
-            .await?
-        } else {
-            self.count_executions().await?
-        };
 
         let next_cursor = if items.len() as i64 == limit {
             Some(offset + limit)
@@ -610,15 +610,22 @@ impl PostgresAuditStore {
             });
         }
 
-        let predecessor_hash: Option<String> = if from_id > 1 {
-            sqlx::query_scalar("select record_hash from execution_audit where id = $1")
-                .bind(from_id - 1)
+        let predecessor_hash: Option<String> =
+            match sqlx::query_scalar("select record_hash from execution_audit where id < $1 order by id desc limit 1")
+                .bind(from_id)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(IntegrityCheckError::Storage)?
-        } else {
-            None
-        };
+            {
+                Some(hash) => Some(hash),
+                None => sqlx::query_scalar(
+                    "select deleted_through_record_hash from audit_retention_checkpoints where boundary_execution_id = $1",
+                )
+                .bind(&query.from_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?,
+            };
 
         let rows = sqlx::query(
             r#"

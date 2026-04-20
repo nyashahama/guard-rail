@@ -49,3 +49,10 @@ observability:
 shutdown:
   grace_period_ms: 15000
   drain_poll_interval_ms: 50
+
+data_ops:
+  audit_retention_days: 180
+  artifact_retention_days: 30
+  replay_run_retention_days: 30
+  orphan_snapshot_retention_days: 30
+  cleanup_batch_size: 1000

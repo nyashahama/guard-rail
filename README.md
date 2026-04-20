@@ -44,6 +44,19 @@ docker run --rm \
 
 `systemd` remains in the repo only as a deferred fallback example. It is not a supported Phase 5 production path.
 
+## Data Operations
+
+Retention cleanup is an explicit operator command, not part of normal startup:
+
+```bash
+cd guard-rail-engine
+GUARDRAIL_DATABASE__URL="$TEST_DATABASE_URL" \
+GUARDRAIL_ADMIN__TOKEN=phase3-admin-token \
+cargo run -- cleanup --config ./deploy/container/config.yaml
+```
+
+See `guard-rail-engine/deploy/container/DATA_OPERATIONS.md` for cleanup, backup, restore, and rollback guidance.
+
 ## Local DB-Backed Testing
 
 DB-backed backend tests require `TEST_DATABASE_URL` locally. CI provisions Postgres automatically for these commands:
