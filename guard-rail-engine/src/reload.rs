@@ -185,7 +185,8 @@ mod tests {
     #[tokio::test]
     async fn test_apply_reload_candidate_rejects_unbound_tenant_route() {
         let routes = std::sync::Arc::new(tokio::sync::RwLock::new(RouteTable::from_routes(vec![])));
-        let policies = std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
+        let policies =
+            std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
         let tenant_cache = crate::tenant::cache::TenantAuthCache::default();
 
         let new_routes = RouteTable::from_routes(vec![crate::routes::Route::new(
@@ -219,7 +220,8 @@ mod tests {
             vec![],
         )]);
         let routes = std::sync::Arc::new(tokio::sync::RwLock::new(original_routes));
-        let policies = std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
+        let policies =
+            std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
         let tenant_cache = crate::tenant::cache::TenantAuthCache::default();
 
         let rejected_routes = RouteTable::from_routes(vec![crate::routes::Route::new(
