@@ -83,9 +83,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         Command::Cleanup { apply } => {
-            if !apply {
-                println!("Dry-run mode: no changes will be applied. Use --apply to execute cleanup.");
+            let pool = storage::postgres::connect_pool(&app_config.database).await?;
+            storage::postgres::assert_schema_ready(&pool).await?;
+
+            let manager = storage::retention::RetentionManager::new(
+                pool,
+                app_config.data_ops.clone(),
+            );
+
+            if apply {
+                let result = manager.apply().await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                let preview = manager.preview().await?;
+                println!("{}", serde_json::to_string_pretty(&preview)?);
             }
+
             return Ok(());
         }
         Command::Serve => {
