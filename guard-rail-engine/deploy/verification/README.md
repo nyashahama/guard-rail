@@ -19,3 +19,31 @@ Each scenario writes a JSON summary with:
 - `status`
 - `timestamp`
 - `metrics`
+
+## Scenarios
+
+### Allowed And Blocked Load
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/load-allowed-and-blocked.sh
+```
+
+Expected:
+- writes `load-allowed-and-blocked.json`
+- exits `0`
+- reports allowed and blocked request counts plus latency summaries
+
+### Reload Under Traffic
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/reload-under-traffic.sh
+```
+
+Expected:
+- writes `reload-under-traffic.json`
+- exits `0`
+- background traffic continues across reload attempts
+- valid candidate changes behavior as expected
+- rejected candidate does not change behavior
