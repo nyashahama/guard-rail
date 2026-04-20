@@ -219,3 +219,132 @@ async fn test_cleanup_apply_prunes_old_rows_and_preserves_integrity_boundary() {
 
     assert!(integrity.chain_valid);
 }
+
+#[tokio::test]
+async fn test_cleanup_apply_respects_batch_size_across_surfaces() {
+    let harness = seed_phase3_data_ops_fixture().await;
+    let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
+        harness.pool.clone(),
+        std::time::Duration::from_millis(250),
+    );
+    let now = chrono::Utc::now();
+
+    let extra_old_record = guard_rail_engine::execution::ExecutionRecord {
+        execution_id: "GR-OLD-3".to_string(),
+        execution_started_at: now - chrono::Duration::days(45),
+        route_id: "test-route".to_string(),
+        tenant_id: None,
+        api_key_id: None,
+        auth_outcome: Some("public".to_string()),
+        upstream_url: Some("http://upstream.test/api".to_string()),
+        method: "POST".to_string(),
+        source_ip: "127.0.0.1".to_string(),
+        content_type: Some("application/json".to_string()),
+        user_agent: Some("phase3-data-ops-test".to_string()),
+        had_authorization_header: false,
+        request_size_bytes: 8,
+        request_body_sha256: guard_rail_engine::audit::hash::hash_body(br#"{"ok":1}"#),
+        verdict: guard_rail_engine::execution::ExecutionVerdict::Allowed,
+        rejection_reason: None,
+        matched_policy_name: None,
+        matched_rule_field: None,
+        matched_rule_condition: None,
+        matched_rule_severity: None,
+        violation_value_hash: None,
+        violation_value_preview: None,
+        upstream_status: Some(200),
+        forward_error: None,
+        latency_inspect_us: 10,
+        latency_forward_ms: Some(3),
+        latency_total_ms: 4,
+        route_config_hash: "route-hash".to_string(),
+        policy_set_hash: "policy-hash".to_string(),
+    };
+    store.insert_execution(&extra_old_record).await.unwrap();
+
+    sqlx::query(
+        r#"
+        insert into policy_snapshots (
+            snapshot_hash, route_id, route_definition, policies_definition, route_config_hash, policy_set_hash, created_at
+        ) values (
+            'SNAP-OLD-2', 'test-route', '{}'::jsonb, '[]'::jsonb, 'route-hash', 'policy-hash', $1
+        )
+        "#,
+    )
+    .bind(now - chrono::Duration::days(80))
+    .execute(&harness.pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        insert into execution_artifacts (
+            execution_id, snapshot_hash, request_body_json, request_headers, response_status,
+            response_headers, response_body, response_body_sha256, response_body_truncated, created_at
+        ) values (
+            'GR-OLD-3', 'SNAP-OLD-2', '{}'::jsonb, '{}'::jsonb, 200,
+            '{}'::jsonb, 'ok', 'resp-hash-2', false, $1
+        )
+        "#,
+    )
+    .bind(now - chrono::Duration::days(80))
+    .execute(&harness.pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        insert into replay_runs (
+            id, execution_id, policy_source, evaluated_snapshot_hash, original_verdict, replay_verdict,
+            original_policy_name, replay_policy_name, original_rule_field, replay_rule_field, verdict_changed, created_at
+        ) values (
+            $1, 'GR-OLD-3', 'snapshot', 'SNAP-OLD-2', 'ALLOWED', 'ALLOWED',
+            null, null, null, null, false, $2
+        )
+        "#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(now - chrono::Duration::days(80))
+    .execute(&harness.pool)
+    .await
+    .unwrap();
+
+    let manager = guard_rail_engine::storage::retention::RetentionManager::new(
+        harness.pool.clone(),
+        guard_rail_engine::config::DataOpsConfig {
+            audit_retention_days: 30,
+            artifact_retention_days: 7,
+            replay_run_retention_days: 7,
+            orphan_snapshot_retention_days: 7,
+            cleanup_batch_size: 1,
+        },
+    );
+
+    let result = manager.apply().await.unwrap();
+    assert_eq!(result.deleted_audit_rows, 1);
+    assert_eq!(result.deleted_execution_artifacts, 1);
+    assert_eq!(result.deleted_replay_runs, 1);
+    assert_eq!(result.deleted_policy_snapshots, 1);
+
+    let audit_rows: i64 = sqlx::query_scalar("select count(*) from execution_audit")
+        .fetch_one(&harness.pool)
+        .await
+        .unwrap();
+    let artifacts: i64 = sqlx::query_scalar("select count(*) from execution_artifacts")
+        .fetch_one(&harness.pool)
+        .await
+        .unwrap();
+    let replay_runs: i64 = sqlx::query_scalar("select count(*) from replay_runs")
+        .fetch_one(&harness.pool)
+        .await
+        .unwrap();
+    let snapshots: i64 = sqlx::query_scalar("select count(*) from policy_snapshots")
+        .fetch_one(&harness.pool)
+        .await
+        .unwrap();
+
+    assert_eq!(audit_rows, 3);
+    assert_eq!(artifacts, 1);
+    assert_eq!(replay_runs, 1);
+    assert_eq!(snapshots, 1);
+}

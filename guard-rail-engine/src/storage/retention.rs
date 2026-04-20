@@ -65,6 +65,7 @@ impl RetentionManager {
 
     pub async fn apply(&self) -> Result<CleanupResult, sqlx::Error> {
         let now = chrono::Utc::now();
+        let batch_size = self.config.cleanup_batch_size as i64;
         let replay_cutoff =
             now - chrono::Duration::days(self.config.replay_run_retention_days as i64);
         let artifact_cutoff =
@@ -75,30 +76,66 @@ impl RetentionManager {
 
         let mut tx = self.pool.begin().await?;
 
-        let deleted_replay_runs = sqlx::query("delete from replay_runs where created_at < $1")
-            .bind(replay_cutoff)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected() as i64;
+        let deleted_replay_runs = sqlx::query(
+            r#"
+            with doomed as (
+                select id
+                from replay_runs
+                where created_at < $1
+                order by created_at asc, id asc
+                limit $2
+            )
+            delete from replay_runs rr
+            using doomed
+            where rr.id = doomed.id
+            "#,
+        )
+        .bind(replay_cutoff)
+        .bind(batch_size)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
 
-        let deleted_execution_artifacts =
-            sqlx::query("delete from execution_artifacts where created_at < $1")
-                .bind(artifact_cutoff)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected() as i64;
+        let deleted_execution_artifacts = sqlx::query(
+            r#"
+            with doomed as (
+                select execution_id
+                from execution_artifacts
+                where created_at < $1
+                order by created_at asc, execution_id asc
+                limit $2
+            )
+            delete from execution_artifacts ea
+            using doomed
+            where ea.execution_id = doomed.execution_id
+            "#,
+        )
+        .bind(artifact_cutoff)
+        .bind(batch_size)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
 
         let deleted_policy_snapshots = sqlx::query(
             r#"
+            with doomed as (
+                select ps.snapshot_hash
+                from policy_snapshots ps
+                where ps.created_at < $1
+                  and not exists (
+                      select 1 from execution_artifacts ea
+                      where ea.snapshot_hash = ps.snapshot_hash
+                  )
+                order by ps.created_at asc, ps.snapshot_hash asc
+                limit $2
+            )
             delete from policy_snapshots ps
-            where ps.created_at < $1
-              and not exists (
-                  select 1 from execution_artifacts ea
-                  where ea.snapshot_hash = ps.snapshot_hash
-              )
+            using doomed
+            where ps.snapshot_hash = doomed.snapshot_hash
             "#,
         )
         .bind(snapshot_cutoff)
+        .bind(batch_size)
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64;
@@ -118,7 +155,7 @@ impl RetentionManager {
             "#,
         )
         .bind(audit_cutoff)
-        .bind(self.config.cleanup_batch_size as i64)
+        .bind(batch_size)
         .fetch_all(&mut *tx)
         .await?;
 
@@ -161,14 +198,12 @@ impl RetentionManager {
                 boundary_execution_id = Some(next_execution_id);
             }
 
-            deleted_audit_rows = sqlx::query(
-                "delete from execution_audit where id <= $1 and execution_started_at < $2",
-            )
-            .bind(last_deleted_id)
-            .bind(audit_cutoff)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected() as i64;
+            let prune_ids: Vec<i64> = prune_rows.iter().map(|row| row.get("id")).collect();
+            deleted_audit_rows = sqlx::query("delete from execution_audit where id = any($1)")
+                .bind(&prune_ids)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected() as i64;
         }
 
         tx.commit().await?;
