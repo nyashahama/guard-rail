@@ -1,0 +1,25 @@
+policies:
+  - name: block-external-callbacks
+    description: Block payloads with callback URLs outside allowlist
+    rules:
+      - field: "$.callback"
+        condition: domain_not_in
+        values: ["*.safe.com", "*.internal.bank.za"]
+        action: block
+        severity: critical
+
+  - name: pii-detection
+    description: Block South African ID numbers
+    rules:
+      - field: "$..*.value"
+        condition: regex_match
+        pattern: "\\b\\d{2}(0[1-9]|1[0-2])\\d{6}\\b"
+        action: block
+        severity: critical
+
+  - name: payload-size-limit
+    rules:
+      - field: "$"
+        condition: size_exceeds
+        max_bytes: 102400
+        action: block

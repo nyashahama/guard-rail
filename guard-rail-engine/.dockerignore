@@ -1,5 +1,6 @@
 target
 .git
-.next
-node_modules
+tests
+deploy/systemd
+scripts/ci
 tmp

@@ -1,3 +1,5 @@
+# Local development sample only. The blessed container deployment path mounts
+# deploy/container/config.yaml (or an equivalent production config) at runtime.
 environment: development
 server:
   host: "0.0.0.0"
@@ -24,28 +26,3 @@ audit:
 
 admin:
   token: "change-me"
-
-admin_server:
-  host: "127.0.0.1"
-  port: 8081
-
-rate_limit:
-  requests_per_minute: 120
-  burst: 30
-
-replay:
-  enabled: true
-  capture_request_headers: ["content-type", "accept", "x-request-id"]
-  capture_response_headers: ["content-type", "x-upstream-version"]
-  max_response_body_bytes: 65536
-
-observability:
-  service_name: "guard-rail-engine"
-  metrics_enabled: true
-  metrics_path: "/metrics"
-  trace_header_name: "traceparent"
-  readiness_probe_timeout_ms: 250
-
-shutdown:
-  grace_period_ms: 15000
-  drain_poll_interval_ms: 50
