@@ -1,0 +1,58 @@
+groups:
+  - name: guard-rail
+    interval: 30s
+    rules:
+      - alert: GuardRailReadinessDown
+        expr: guardrail_readiness == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guard Rail readiness endpoint is down"
+          description: "Guard Rail has been unresponsive for 1 minute"
+          runbook_url: "#readiness-down"
+
+      - alert: GuardRailAuditPersistenceFailures
+        expr: increase(guardrail_audit_persist_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Guard Rail audit persistence is failing"
+          description: "Audit persistence has failed repeatedly in the last 5 minutes"
+          runbook_url: "#audit-persistence-failures"
+
+      - alert: GuardRailReplayPersistenceFailures
+        expr: increase(guardrail_replay_persist_failures_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guard Rail replay persistence is failing"
+          description: "Replay persistence has failed in the last 5 minutes"
+          runbook_url: "#replay-persistence-failures"
+
+      - alert: GuardRailReloadFailures
+        expr: increase(guardrail_reload_events_total{outcome=~"rejected|failed"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guard Rail config reload is failing"
+          description: "Config reload has failed or been rejected in the last 5 minutes"
+          runbook_url: "#bad-policy-reload"
+
+      - alert: GuardRailAuthRejectionSpike
+        expr: increase(guardrail_auth_rejections_total[5m]) > 100
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guard Rail auth rejections are elevated"
+          description: "More than 100 auth rejections in the last 5 minutes"
+          runbook_url: "#auth-rejection-spike"
+
+      - alert: GuardRailUpstreamFailures
+        expr: rate(guardrail_upstream_failures_total[5m]) > 0.1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Guard Rail upstream failure rate is elevated"
+          description: "More than 10% of upstream requests are failing"
+          runbook_url: "#upstream-outage"
