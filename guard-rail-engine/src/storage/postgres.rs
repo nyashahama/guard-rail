@@ -293,6 +293,13 @@ impl PostgresAuditStore {
         }))
     }
 
+    #[allow(dead_code)]
+    pub async fn count_executions(&self) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar("select count(*) from execution_audit")
+            .fetch_one(&self.pool)
+            .await
+    }
+
     pub async fn list_executions(
         &self,
         query: crate::audit::api::AuditListQuery,
