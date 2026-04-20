@@ -25,7 +25,10 @@ export function Trust() {
     <>
       {/* ── FEATURES / BENTO ── */}
       <section id="features" className="relative z-[1]">
-        <div ref={bentoRef} className="px-20 py-[120px] max-w-[1400px] mx-auto">
+        <div
+          ref={bentoRef}
+          className="mx-auto max-w-[1400px] px-5 py-24 sm:px-8 lg:px-20 lg:py-[120px]"
+        >
           <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
             {"// Capabilities"}
           </span>
@@ -40,19 +43,15 @@ export function Trust() {
 
           {/* Bento Grid */}
           <div
-            className="mt-14"
+            className="mt-14 grid grid-cols-1 gap-px md:grid-cols-2 xl:grid-cols-3"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: "1px",
               background: "rgba(255,255,255,0.06)",
               border: "1px solid rgba(255,255,255,0.06)",
             }}
           >
             {/* Wide cell — Payload Inspection */}
             <div
-              className="obs-target bento-cell relative bg-void p-10 overflow-hidden hover:bg-surface transition-colors duration-[400ms] flex flex-row items-start justify-between gap-12 flex-wrap"
-              style={{ gridColumn: "span 2" }}
+              className="obs-target bento-cell relative flex flex-col items-start justify-between gap-8 overflow-hidden bg-void p-6 transition-colors duration-[400ms] hover:bg-surface md:col-span-2 sm:p-8 lg:flex-row lg:gap-12 lg:p-10 xl:col-span-2"
             >
               <div className="bento-glow" />
               <div>
@@ -70,17 +69,17 @@ export function Trust() {
                 <div className="text-[20px] font-bold tracking-[-0.01em] mb-2">Payload Inspection</div>
                 <p className="font-mono text-[12.5px] text-white/45 leading-[1.7] max-w-[380px]">
                   Guard Rail receives your webhook, inspects the payload against every configured
-                  policy using JSONPath field matching, and either forwards or blocks. Zero code
-                  execution surface. Zero attack surface expansion.
+                  policy using JSONPath field matching, and either forwards or blocks the request.
+                  No custom application code runs inside the policy path.
                 </p>
               </div>
-              <div className="font-mono text-[11px] text-white/30 self-end whitespace-nowrap">
+              <div className="self-start font-mono text-[11px] text-white/30 break-all lg:self-end lg:text-right lg:break-normal">
                 env.inspect() → execution_context_id: GR-8922x
               </div>
             </div>
 
             {/* Declarative YAML Rules */}
-            <div className="obs-target bento-cell relative bg-void p-10 overflow-hidden hover:bg-surface transition-colors duration-[400ms] flex flex-col gap-3.5">
+            <div className="obs-target bento-cell relative flex flex-col gap-3.5 overflow-hidden bg-void p-6 transition-colors duration-[400ms] hover:bg-surface sm:p-8 lg:p-10">
               <div className="bento-glow" />
               <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-cyan border border-cyan/25 px-2 py-[3px] self-start">
                 Policy Engine
@@ -99,7 +98,7 @@ export function Trust() {
             </div>
 
             {/* Cryptographic Audit Logs */}
-            <div className="obs-target bento-cell relative bg-void p-10 overflow-hidden hover:bg-surface transition-colors duration-[400ms] flex flex-col gap-3.5">
+            <div className="obs-target bento-cell relative flex flex-col gap-3.5 overflow-hidden bg-void p-6 transition-colors duration-[400ms] hover:bg-surface sm:p-8 lg:p-10">
               <div className="bento-glow" />
               <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-cyan border border-cyan/25 px-2 py-[3px] self-start">
                 Audit Trail
@@ -121,7 +120,7 @@ export function Trust() {
             </div>
 
             {/* Deterministic Replay */}
-            <div className="obs-target bento-cell relative bg-void p-10 overflow-hidden hover:bg-surface transition-colors duration-[400ms] flex flex-col gap-3.5">
+            <div className="obs-target bento-cell relative flex flex-col gap-3.5 overflow-hidden bg-void p-6 transition-colors duration-[400ms] hover:bg-surface sm:p-8 lg:p-10">
               <div className="bento-glow" />
               <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-cyan border border-cyan/25 px-2 py-[3px] self-start">
                 Replay Engine
@@ -138,11 +137,10 @@ export function Trust() {
 
             {/* Wide cell — Safety + Compliance */}
             <div
-              className="obs-target bento-cell relative bg-void p-10 overflow-hidden hover:bg-surface transition-colors duration-[400ms] flex flex-col gap-3.5"
-              style={{ gridColumn: "span 2" }}
+              className="obs-target bento-cell relative flex flex-col gap-3.5 overflow-hidden bg-void p-6 transition-colors duration-[400ms] hover:bg-surface md:col-span-2 sm:p-8 lg:p-10 xl:col-span-2"
             >
               <div className="bento-glow" />
-              <div className="grid gap-10" style={{ gridTemplateColumns: "1fr 1fr", width: "100%" }}>
+              <div className="grid w-full grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-10">
                 <div>
                   <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-cyan border border-cyan/25 px-2 py-[3px] self-start inline-block">
                     Safety
@@ -153,8 +151,8 @@ export function Trust() {
                   <div className="text-[20px] font-bold tracking-[-0.01em] mb-2">Fail-Closed by Design</div>
                   <p className="font-mono text-[12.5px] text-white/45 leading-[1.7]">
                     Guard Rail refuses to start if policy files reference a missing name. On
-                    hot-reload, a syntax error keeps the previous valid set active. You never
-                    run unprotected.
+                    hot-reload, a syntax error keeps the last valid set active so an invalid
+                    update does not silently disable inspection.
                   </p>
                 </div>
                 <div>
@@ -164,10 +162,13 @@ export function Trust() {
                   <svg className="text-cyan my-3" width="32" height="32" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                   </svg>
-                  <div className="text-[20px] font-bold tracking-[-0.01em] mb-2">POPIA-Safe by Architecture</div>
+                  <div className="text-[20px] font-bold tracking-[-0.01em] mb-2">
+                    Deployment Boundaries That Support POPIA
+                  </div>
                   <p className="font-mono text-[12.5px] text-white/45 leading-[1.7]">
-                    On-premise or ZA-AWS VPC deployment. No cross-border payload transmission.
-                    Data residency is a structural guarantee, not a checkbox.
+                    On-premise or single-region ZA AWS VPC deployment gives teams a path to keep
+                    payload handling within their chosen boundary. Final compliance still depends
+                    on deployment, policy, and operational controls.
                   </p>
                 </div>
               </div>
@@ -187,7 +188,7 @@ export function Trust() {
           borderBottom: "1px solid rgba(255,255,255,0.04)",
         }}
       >
-        <div className="px-20 py-[120px] max-w-[1400px] mx-auto">
+        <div className="mx-auto max-w-[1400px] px-5 py-24 sm:px-8 lg:px-20 lg:py-[120px]">
           <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-cyan block mb-4">
             {"// The Shift in Paradigm"}
           </span>
@@ -202,32 +203,32 @@ export function Trust() {
 
           {/* Comparison Table */}
           <div
-            className="mt-12 overflow-x-auto"
+            className="trust-scroll-area mt-12 -mx-5 overflow-x-auto px-5 sm:mx-0 sm:px-0"
             style={{ border: "1px solid rgba(255,255,255,0.06)" }}
           >
-            <table className="w-full border-collapse" style={{ minWidth: "700px" }}>
+            <table className="w-full min-w-[640px] border-collapse sm:min-w-[700px]">
               <thead>
                 <tr>
                   <th
-                    className="font-mono text-[10.5px] tracking-[0.2em] uppercase text-white/40 px-7 py-5 text-left font-medium border-b border-white/6"
+                    className="border-b border-white/6 px-4 py-4 text-left font-mono text-[10.5px] font-medium tracking-[0.2em] text-white/40 uppercase sm:px-7 sm:py-5"
                     style={{ width: "38%", background: "var(--surface-light)" }}
                   >
                     Capability
                   </th>
                   <th
-                    className="font-mono text-[10.5px] tracking-[0.2em] uppercase text-white/40 px-7 py-5 text-center font-medium border-b border-white/6"
+                    className="border-b border-white/6 px-4 py-4 text-center font-mono text-[10.5px] font-medium tracking-[0.2em] text-white/40 uppercase sm:px-7 sm:py-5"
                     style={{ width: "18%", background: "var(--surface-light)" }}
                   >
                     Legacy API Gateways
                   </th>
                   <th
-                    className="font-mono text-[10.5px] tracking-[0.2em] uppercase text-white/40 px-7 py-5 text-center font-medium border-b border-white/6"
+                    className="border-b border-white/6 px-4 py-4 text-center font-mono text-[10.5px] font-medium tracking-[0.2em] text-white/40 uppercase sm:px-7 sm:py-5"
                     style={{ width: "18%", background: "var(--surface-light)" }}
                   >
                     In-house Middleware
                   </th>
                   <th
-                    className="font-mono text-[10.5px] tracking-[0.2em] uppercase text-cyan px-7 py-5 text-center font-medium border-b border-white/6"
+                    className="border-b border-white/6 px-4 py-4 text-center font-mono text-[10.5px] font-medium tracking-[0.2em] text-cyan uppercase sm:px-7 sm:py-5"
                     style={{
                       width: "26%",
                       background: "rgba(0,240,255,0.05)",
@@ -277,8 +278,8 @@ export function Trust() {
                     gStyle: "yes",
                   },
                   {
-                    cap: "ZA Data Residency Guarantee",
-                    legacy: "Offshore",
+                    cap: "ZA Residency Controls",
+                    legacy: "Vendor-specific",
                     inhouse: "✓",
                     gr: "✓",
                     lStyle: "partial",
@@ -287,21 +288,21 @@ export function Trust() {
                   },
                 ].map((row, i) => (
                   <tr key={i} className="group hover:[&>td]:bg-surface">
-                    <td className="px-7 py-[18px] font-mono text-[12.5px] border-b border-white/4 text-white/60 transition-colors">
+                    <td className="border-b border-white/4 px-4 py-4 font-mono text-[12px] text-white/60 transition-colors sm:px-7 sm:py-[18px] sm:text-[12.5px]">
                       {row.cap}
                     </td>
-                    <td className="px-7 py-[18px] font-mono text-[12.5px] border-b border-white/4 text-center transition-colors">
+                    <td className="border-b border-white/4 px-4 py-4 text-center font-mono text-[12px] transition-colors sm:px-7 sm:py-[18px] sm:text-[12.5px]">
                       <span className={row.lStyle === "yes" ? "text-green block text-center" : row.lStyle === "partial" ? "text-[#FFB300] block text-center text-[11px]" : "text-white/20 block text-center"}>
                         {row.legacy}
                       </span>
                     </td>
-                    <td className="px-7 py-[18px] font-mono text-[12.5px] border-b border-white/4 text-center transition-colors">
+                    <td className="border-b border-white/4 px-4 py-4 text-center font-mono text-[12px] transition-colors sm:px-7 sm:py-[18px] sm:text-[12.5px]">
                       <span className={row.iStyle === "yes" ? "text-green block text-center" : row.iStyle === "partial" ? "text-[#FFB300] block text-center text-[11px]" : "text-white/20 block text-center"}>
                         {row.inhouse}
                       </span>
                     </td>
                     <td
-                      className="px-7 py-[18px] font-mono text-[12.5px] border-b text-center transition-colors"
+                      className="border-b px-4 py-4 text-center font-mono text-[12px] transition-colors sm:px-7 sm:py-[18px] sm:text-[12.5px]"
                       style={{
                         background: "rgba(0,240,255,0.03)",
                         borderLeft: "1px solid rgba(0,240,255,0.1)",
