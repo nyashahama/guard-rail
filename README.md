@@ -4,19 +4,16 @@
 
 ## Guard Rail Engine Operations
 
-Run migrations:
+### Canonical Pilot Deployment
 
-```bash
-cd guard-rail-engine
-cargo run -- migrate --config ./config/config.yaml
-```
+The only supported pilot deployment path is:
 
-Serve locally:
+`container image + external Postgres + reverse proxy/LB`
 
-```bash
-cd guard-rail-engine
-cargo run -- serve --config ./config/config.yaml
-```
+The container expects:
+- a mounted config directory at `/etc/guard-rail-engine`
+- env overrides for secrets such as `GUARDRAIL_DATABASE__URL` and `GUARDRAIL_ADMIN__TOKEN`
+- migrations to be run separately from the normal service start path
 
 Build the container image:
 
@@ -25,23 +22,27 @@ cd guard-rail-engine
 docker build -t guard-rail-engine .
 ```
 
-Install the systemd unit:
+Run migrations:
 
 ```bash
-sudo cp guard-rail-engine/deploy/systemd/guard-rail-engine.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now guard-rail-engine
+docker run --rm \
+  -v "$(pwd)/deploy/container:/etc/guard-rail-engine:ro" \
+  --env-file ./deploy/container/guard-rail-engine.env.example \
+  guard-rail-engine \
+  migrate --config /etc/guard-rail-engine/config.yaml
 ```
 
-Operational endpoints:
-- `GET /health`
-- `GET /ready`
-- `GET /metrics`
+Start the runtime:
 
-Container and service artifacts:
-- `guard-rail-engine/Dockerfile`
-- `guard-rail-engine/.dockerignore`
-- `guard-rail-engine/deploy/systemd/guard-rail-engine.service`
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -v "$(pwd)/deploy/container:/etc/guard-rail-engine:ro" \
+  --env-file ./deploy/container/guard-rail-engine.env.example \
+  guard-rail-engine
+```
+
+`systemd` remains in the repo only as a deferred fallback example. It is not a supported Phase 5 production path.
 
 ## Local DB-Backed Testing
 

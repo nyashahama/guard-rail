@@ -1,13 +1,11 @@
-# Local development sample only. The blessed container deployment path mounts
-# deploy/container/config.yaml (or an equivalent production config) at runtime.
-environment: development
+environment: production
 server:
   host: "0.0.0.0"
   port: 8080
   request_body_limit_bytes: 1048576
 
-routes_file: "./config/routes.yaml"
-policies_dir: "./config/policies/"
+routes_file: "/etc/guard-rail-engine/routes.yaml"
+policies_dir: "/etc/guard-rail-engine/policies/"
 
 forwarding:
   default_timeout_ms: 5000
@@ -18,14 +16,14 @@ logging:
   format: "json"
 
 database:
-  url: "postgres://guardrail:secret@localhost:5432/guardrail"
+  url: ""
   max_connections: 10
 
 audit:
   write_timeout_ms: 250
 
 admin:
-  token: "change-me"
+  token: ""
 
 admin_server:
   host: "127.0.0.1"
