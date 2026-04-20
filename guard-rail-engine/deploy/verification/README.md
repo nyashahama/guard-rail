@@ -47,3 +47,43 @@ Expected:
 - background traffic continues across reload attempts
 - valid candidate changes behavior as expected
 - rejected candidate does not change behavior
+
+### Drain Under Load
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/drain-under-load.sh
+```
+
+Expected:
+- writes `drain-under-load.json`
+- exits `0`
+- in-flight request returns successfully
+- `/ready` transitions away from ready during drain
+
+### Database Degradation
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/db-degradation.sh
+```
+
+Expected:
+- writes `db-degradation.json`
+- exits `0`
+- `/ready` returns `200` while DB is healthy
+- `/ready` returns `503` after DB becomes unavailable
+- restarts the DB container on cleanup
+
+### Upstream Degradation
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/upstream-degradation.sh
+```
+
+Expected:
+- writes `upstream-degradation.json`
+- exits `0`
+- timeout drill returns `502`
+- error drill returns `500`
