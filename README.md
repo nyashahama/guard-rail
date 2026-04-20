@@ -89,3 +89,7 @@ The runtime exposes Prometheus metrics at `/metrics`. See `guard-rail-engine/dep
 - Alert rules (`prometheus-alerts.yml`)
 - Grafana dashboard (`grafana-dashboard.json`)
 - Operator runbooks (`RUNBOOKS.md`)
+
+## Verification
+
+See `guard-rail-engine/deploy/verification/README.md` for the Phase 7 verification package covering load, resilience, and security verification.

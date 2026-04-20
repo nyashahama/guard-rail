@@ -696,6 +696,98 @@ async fn test_tenant_audit_detail_for_other_tenant_returns_404() {
 }
 
 #[tokio::test]
+async fn test_concurrent_audit_inserts_preserve_integrity() {
+    let _harness = build_test_router_with_audit_store().await;
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(10)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    let store = guard_rail_engine::storage::postgres::PostgresAuditStore::new(
+        pool,
+        std::time::Duration::from_secs(5),
+    );
+
+    let mut handles = vec![];
+    for index in 0..10 {
+        let store = store.clone();
+        handles.push(tokio::spawn(async move {
+            let record = guard_rail_engine::execution::ExecutionRecord {
+                execution_id: format!("GR-EXE-CONCURRENT-{index}"),
+                execution_started_at: chrono::Utc::now(),
+                route_id: "test-route".to_string(),
+                tenant_id: None,
+                api_key_id: None,
+                auth_outcome: None,
+                upstream_url: Some("http://example.com".to_string()),
+                method: "POST".to_string(),
+                source_ip: "127.0.0.1".to_string(),
+                content_type: Some("application/json".to_string()),
+                user_agent: None,
+                had_authorization_header: false,
+                request_size_bytes: 2,
+                request_body_sha256: guard_rail_engine::audit::hash::hash_body(br#"{}"#),
+                verdict: guard_rail_engine::execution::ExecutionVerdict::Allowed,
+                rejection_reason: None,
+                matched_policy_name: None,
+                matched_rule_field: None,
+                matched_rule_condition: None,
+                matched_rule_severity: None,
+                violation_value_hash: None,
+                violation_value_preview: None,
+                upstream_status: Some(200),
+                forward_error: None,
+                latency_inspect_us: 10,
+                latency_forward_ms: Some(1),
+                latency_total_ms: 1,
+                route_config_hash: "routes".to_string(),
+                policy_set_hash: "policies".to_string(),
+            };
+            store.insert_execution(&record).await.unwrap();
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    // Find the first and last records by auto-increment id to establish the chain range
+    let query_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"
+        select execution_id
+        from execution_audit
+        where execution_id like 'GR-EXE-CONCURRENT-%'
+        order by id asc
+        "#,
+    )
+    .fetch_all(&query_pool)
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 10);
+    let from_id = rows.first().unwrap().0.clone();
+    let to_id = rows.last().unwrap().0.clone();
+
+    let integrity = store
+        .verify_integrity(guard_rail_engine::audit::api::IntegrityQuery {
+            from_execution_id: from_id,
+            to_execution_id: to_id,
+        })
+        .await
+        .unwrap();
+
+    assert!(integrity.chain_valid);
+    assert_eq!(integrity.first_invalid_record, None);
+}
+
+#[tokio::test]
 async fn test_audit_integrity_endpoint_reports_tampered_chain() {
     let harness = build_test_router_with_seeded_audit_rows().await;
 
