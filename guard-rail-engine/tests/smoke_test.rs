@@ -48,6 +48,94 @@ async fn start_slow_harness(initial_ready: bool) -> SmokeHarness {
     start_harness_with_delay(initial_ready, 250).await
 }
 
+async fn start_harness_with_upstream_timeout(initial_ready: bool) -> SmokeHarness {
+    let upstream = start_mock_upstream(200, r#"{"ok":true}"#, 10_000).await;
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path();
+
+    write_file(
+        config_dir,
+        "routes.yaml",
+        &format!(
+            r#"
+routes:
+  - id: timeout-route
+    auth_mode: public
+    upstream: {upstream}/api/timeout
+    methods: [POST]
+    policies: []
+    timeout_ms: 50
+"#
+        ),
+    );
+
+    let policies_dir = config_dir.join("policies");
+    std::fs::create_dir_all(&policies_dir).unwrap();
+    write_file(&policies_dir, "policy.yaml", "policies: []\n");
+
+    let routes =
+        guard_rail_engine::routes::RouteTable::load(&config_dir.join("routes.yaml")).unwrap();
+    let policies = guard_rail_engine::policy::PolicySet::load_dir(&policies_dir).unwrap();
+    let metrics = Arc::new(guard_rail_engine::observability::metrics::Metrics::new().unwrap());
+    let lifecycle = guard_rail_engine::shutdown::LifecycleState::new();
+
+    if initial_ready {
+        lifecycle.mark_ready().await;
+        metrics.set_readiness(true);
+        metrics.record_shutdown_transition("ready");
+    }
+
+    let state = guard_rail_engine::proxy::AppState {
+        routes: Arc::new(RwLock::new(routes)),
+        policies: Arc::new(RwLock::new(policies)),
+        http_client: Client::new(),
+        audit_store: None,
+        metrics: Some(Arc::clone(&metrics)),
+        lifecycle: lifecycle.clone(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: "stage5-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy("postgres://localhost:5432")
+                .unwrap(),
+        ),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
+    };
+
+    let app = guard_rail_engine::proxy::build_router(
+        state,
+        "stage5-admin-token".to_string(),
+        1_048_576,
+        &guard_rail_engine::config::ObservabilityConfig::default(),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    SmokeHarness {
+        base_url: format!("http://{}", addr),
+        lifecycle,
+        metrics,
+        _tmp: tmp,
+    }
+}
+
 async fn start_harness_with_delay(initial_ready: bool, delay_ms: u64) -> SmokeHarness {
     let upstream = start_mock_upstream(200, r#"{"ok":true}"#, delay_ms).await;
     let tmp = TempDir::new().unwrap();
@@ -199,6 +287,33 @@ async fn test_health_stays_200_while_ready_returns_503_during_drain() {
         .await
         .unwrap();
     assert_eq!(ready.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn test_upstream_failure_path_records_bounded_failure_metrics() {
+    let harness = start_harness_with_upstream_timeout(true).await;
+    let client = Client::new();
+
+    let response = client
+        .post(format!("{}/v1/execute/timeout-route", harness.base_url))
+        .header("content-type", "application/json")
+        .body(r#"{"data":"hello"}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+
+    let metrics = reqwest::get(format!("{}/metrics", harness.base_url))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    assert!(metrics.contains("guardrail_upstream_failures_total"));
+    assert!(metrics.contains("guardrail_upstream_latency_seconds"));
+    assert!(metrics.contains("route_id=\"timeout-route\""));
 }
 
 #[tokio::test]
