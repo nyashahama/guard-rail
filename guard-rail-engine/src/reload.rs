@@ -108,10 +108,10 @@ pub async fn apply_reload_candidate(
         .map_err(|err| format!("{err:?}"))?;
 
     crate::tenant::cache::validate_all_routes_bound(&new_routes, &snapshot)
-        .map_err(|err| format!("{err}"))?;
+        .map_err(|err| err.to_string())?;
 
     crate::routes::RouteValidator::validate_upstream_security(&new_routes, environment)
-        .map_err(|err| format!("{err}"))?;
+        .map_err(|err| err.to_string())?;
 
     *routes.write().await = new_routes;
     *policies.write().await = new_policies;
