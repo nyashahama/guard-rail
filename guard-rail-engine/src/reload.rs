@@ -1,3 +1,4 @@
+use crate::observability::metrics::Metrics;
 use crate::policy::PolicySet;
 use crate::routes::RouteTable;
 use crate::tenant::cache::TenantAuthCache;
@@ -13,6 +14,7 @@ pub fn start_watcher(
     policies: Arc<RwLock<PolicySet>>,
     tenant_cache: TenantAuthCache,
     environment: crate::config::RuntimeEnvironment,
+    metrics: Option<Arc<Metrics>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let rt = tokio::runtime::Handle::current();
     let rt_initial = rt.clone();
@@ -20,6 +22,7 @@ pub fn start_watcher(
     let routes_path = routes_file.clone();
     let policies_path = policies_dir.clone();
     let initial_tenant_cache = tenant_cache.clone();
+    let initial_metrics = metrics.clone();
 
     let callback_routes = Arc::clone(&routes);
     let callback_policies = Arc::clone(&policies);
@@ -27,6 +30,7 @@ pub fn start_watcher(
     let callback_routes_path = routes_file.clone();
     let callback_policies_path = policies_dir.clone();
     let callback_environment = environment;
+    let callback_metrics = metrics;
 
     let mut watcher =
         notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -42,6 +46,7 @@ pub fn start_watcher(
                 let routes_path = callback_routes_path.clone();
                 let policies_path = callback_policies_path.clone();
                 let environment = callback_environment;
+                let metrics = callback_metrics.clone();
 
                 rt.spawn(async move {
                     reload_all(
@@ -51,6 +56,7 @@ pub fn start_watcher(
                         &policies,
                         &tenant_cache,
                         environment,
+                        metrics,
                     )
                     .await;
                 });
@@ -66,6 +72,7 @@ pub fn start_watcher(
 
     let final_routes = Arc::clone(&routes);
     let final_policies = Arc::clone(&policies);
+    let final_metrics = initial_metrics;
     rt_initial.spawn(async move {
         reload_all(
             &routes_path,
@@ -74,6 +81,7 @@ pub fn start_watcher(
             &final_policies,
             &initial_tenant_cache,
             environment,
+            final_metrics,
         )
         .await;
     });
@@ -114,11 +122,19 @@ async fn reload_all(
     policies: &Arc<RwLock<PolicySet>>,
     tenant_cache: &TenantAuthCache,
     environment: crate::config::RuntimeEnvironment,
+    metrics: Option<Arc<Metrics>>,
 ) {
+    if let Some(metrics) = &metrics {
+        metrics.record_reload_event("started");
+    }
+
     let new_policies = match PolicySet::load_dir(policies_path) {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!("Policies reload failed, keeping previous config: {}", e);
+            if let Some(metrics) = &metrics {
+                metrics.record_reload_event("failed");
+            }
             return;
         }
     };
@@ -127,6 +143,9 @@ async fn reload_all(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("Routes reload failed, keeping previous config: {}", e);
+            if let Some(metrics) = &metrics {
+                metrics.record_reload_event("failed");
+            }
             return;
         }
     };
@@ -142,7 +161,15 @@ async fn reload_all(
     .await
     {
         tracing::warn!("Reload rejected — {}", e);
+        if let Some(metrics) = &metrics {
+            metrics.record_reload_event("rejected");
+        }
         return;
+    }
+
+    if let Some(metrics) = &metrics {
+        metrics.record_reload_event("succeeded");
+        metrics.record_reload_success_now();
     }
 
     tracing::info!("Routes and policies reloaded successfully");

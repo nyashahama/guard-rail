@@ -141,25 +141,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tenant_cache = TenantAuthCache::default();
     tenant_cache.replace(auth_snapshot).await;
 
-    let reload_routes = Arc::clone(&routes);
-    let reload_policies = Arc::clone(&policies);
-    reload::start_watcher(
-        PathBuf::from(&app_config.routes_file),
-        PathBuf::from(&app_config.policies_dir),
-        reload_routes,
-        reload_policies,
-        tenant_cache.clone(),
-        app_config.environment,
-    )?;
-
-    let http_client = Client::builder()
-        .user_agent(&app_config.forwarding.user_agent)
-        .build()?;
-
-    let audit_store = storage::postgres::PostgresAuditStore::new(
-        pool.clone(),
-        std::time::Duration::from_millis(250),
-    );
     let metrics = if app_config.observability.metrics_enabled {
         match observability::metrics::Metrics::new() {
             Ok(metrics) => Some(Arc::new(metrics)),
@@ -171,6 +152,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+
+    let reload_routes = Arc::clone(&routes);
+    let reload_policies = Arc::clone(&policies);
+    reload::start_watcher(
+        PathBuf::from(&app_config.routes_file),
+        PathBuf::from(&app_config.policies_dir),
+        reload_routes,
+        reload_policies,
+        tenant_cache.clone(),
+        app_config.environment,
+        metrics.clone(),
+    )?;
+
+    let http_client = Client::builder()
+        .user_agent(&app_config.forwarding.user_agent)
+        .build()?;
+
+    let audit_store = storage::postgres::PostgresAuditStore::new(
+        pool.clone(),
+        std::time::Duration::from_millis(250),
+    );
     let lifecycle = shutdown::LifecycleState::new();
 
     let route_config_path = PathBuf::from(&app_config.routes_file);

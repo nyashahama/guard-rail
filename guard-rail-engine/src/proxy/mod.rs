@@ -214,6 +214,9 @@ pub async fn handle_execute(
             let bound_tenant_id = match snapshot.route_bindings.get(&route_id) {
                 Some(tenant_id) => *tenant_id,
                 None => {
+                    if let Some(metrics) = &state.metrics {
+                        metrics.record_auth_rejection("route_unbound");
+                    }
                     let record = ExecutionRecord {
                         execution_id: execution_id.clone(),
                         execution_started_at,
@@ -277,6 +280,9 @@ pub async fn handle_execute(
                     tracing::Span::current()
                         .record("api_key_id", tracing::field::display(api_key_id));
                     if !state.rate_limiter.allow(tenant_id).await {
+                        if let Some(metrics) = &state.metrics {
+                            metrics.record_auth_rejection("rate_limited");
+                        }
                         let record = ExecutionRecord {
                             execution_id: execution_id.clone(),
                             execution_started_at,
@@ -334,6 +340,9 @@ pub async fn handle_execute(
                     api_key_id,
                     ..
                 }) => {
+                    if let Some(metrics) = &state.metrics {
+                        metrics.record_auth_rejection("tenant_route_mismatch");
+                    }
                     let record = ExecutionRecord {
                         execution_id: execution_id.clone(),
                         execution_started_at,
@@ -383,6 +392,9 @@ pub async fn handle_execute(
                 Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
                 Err(auth_failure) => {
                     let auth_outcome_str = auth_failure.as_str().to_string();
+                    if let Some(metrics) = &state.metrics {
+                        metrics.record_auth_rejection(auth_failure.as_str());
+                    }
                     let record = ExecutionRecord {
                         execution_id: execution_id.clone(),
                         execution_started_at,
@@ -533,6 +545,7 @@ pub async fn handle_execute(
     let verdict = evaluate(&payload, body.len(), &route.policies, &policies);
     drop(policies);
     let latency_inspect_us = inspect_start.elapsed().as_micros();
+    let latency_inspect_seconds = latency_inspect_us as f64 / 1_000_000.0;
 
     match verdict {
         Verdict::Block {
@@ -595,6 +608,14 @@ pub async fn handle_execute(
                     response_body_sha256: None,
                     response_body_truncated: false,
                 };
+                if let Some(metrics) = &state.metrics {
+                    metrics.record_policy_latency(
+                        &route_id,
+                        &method_str,
+                        "BLOCKED",
+                        latency_inspect_seconds,
+                    );
+                }
                 record_execution_metric(
                     state.metrics.as_ref(),
                     &route_id,
@@ -611,6 +632,14 @@ pub async fn handle_execute(
                     state.metrics.clone(),
                 );
             } else {
+                if let Some(metrics) = &state.metrics {
+                    metrics.record_policy_latency(
+                        &route_id,
+                        &method_str,
+                        "BLOCKED",
+                        latency_inspect_seconds,
+                    );
+                }
                 record_execution_metric(
                     state.metrics.as_ref(),
                     &route_id,
@@ -623,7 +652,16 @@ pub async fn handle_execute(
             }
             return response::block_response(&execution_id, &policy_name, &rule_field, &message);
         }
-        Verdict::Allow => {}
+        Verdict::Allow => {
+            if let Some(metrics) = &state.metrics {
+                metrics.record_policy_latency(
+                    &route_id,
+                    &method_str,
+                    "ALLOWED",
+                    latency_inspect_seconds,
+                );
+            }
+        }
     }
 
     // 5. Forward to upstream
@@ -653,6 +691,7 @@ pub async fn handle_execute(
     .await
     {
         Ok(result) => {
+            let forward_elapsed = forward_start.elapsed();
             let record = ExecutionRecord {
                 execution_id: execution_id.clone(),
                 execution_started_at,
@@ -679,11 +718,18 @@ pub async fn handle_execute(
                 upstream_status: Some(result.status),
                 forward_error: None,
                 latency_inspect_us,
-                latency_forward_ms: Some(forward_start.elapsed().as_millis()),
+                latency_forward_ms: Some(forward_elapsed.as_millis()),
                 latency_total_ms: total_start.elapsed().as_millis(),
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
             };
+            if let Some(metrics) = &state.metrics {
+                metrics.record_upstream_latency(
+                    &route_id,
+                    &method_str,
+                    forward_elapsed.as_secs_f64(),
+                );
+            }
             record_execution_metric(
                 state.metrics.as_ref(),
                 &route_id,
@@ -735,6 +781,7 @@ pub async fn handle_execute(
             result.response
         }
         Err(e) => {
+            let forward_elapsed = forward_start.elapsed();
             let record = ExecutionRecord {
                 execution_id: execution_id.clone(),
                 execution_started_at,
@@ -761,7 +808,7 @@ pub async fn handle_execute(
                 upstream_status: None,
                 forward_error: Some(e.clone()),
                 latency_inspect_us,
-                latency_forward_ms: Some(forward_start.elapsed().as_millis()),
+                latency_forward_ms: Some(forward_elapsed.as_millis()),
                 latency_total_ms: total_start.elapsed().as_millis(),
                 route_config_hash: state.route_config_hash.clone(),
                 policy_set_hash: state.policy_set_hash.clone(),
@@ -776,6 +823,11 @@ pub async fn handle_execute(
             tracing::Span::current().record("verdict", "UPSTREAM_FAILURE");
             if let Some(metrics) = &state.metrics {
                 metrics.record_upstream_failure(&route_id);
+                metrics.record_upstream_latency(
+                    &route_id,
+                    &method_str,
+                    forward_elapsed.as_secs_f64(),
+                );
             }
             spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
             response::bad_gateway_response(&execution_id, &e)
@@ -799,6 +851,14 @@ async fn ready_handler(State(state): State<AppState>) -> impl IntoResponse {
 
     let ready = lifecycle_ready && db_ready;
     if let Some(metrics) = &state.metrics {
+        if !ready {
+            if !lifecycle_ready {
+                metrics.record_readiness_failure("lifecycle_draining");
+            }
+            if !db_ready {
+                metrics.record_readiness_failure("database_unavailable");
+            }
+        }
         metrics.set_readiness(ready);
     }
 

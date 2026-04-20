@@ -1,5 +1,6 @@
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Encoder, Gauge, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry,
+    TextEncoder,
 };
 
 pub struct Metrics {
@@ -12,6 +13,12 @@ pub struct Metrics {
     inflight_requests: IntGauge,
     readiness: IntGauge,
     shutdown_transitions_total: IntCounterVec,
+    policy_latency_seconds: HistogramVec,
+    upstream_latency_seconds: HistogramVec,
+    auth_rejections_total: IntCounterVec,
+    reload_events_total: IntCounterVec,
+    last_reload_success_timestamp_seconds: Gauge,
+    readiness_failures_total: IntCounterVec,
 }
 
 pub struct InflightGuard {
@@ -76,6 +83,46 @@ impl Metrics {
             &["state"],
         )?;
 
+        let policy_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "guardrail_policy_latency_seconds",
+                "Observed policy-processing latency in seconds.",
+            ),
+            &["route_id", "method", "verdict"],
+        )?;
+        let upstream_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "guardrail_upstream_latency_seconds",
+                "Observed upstream forwarding latency in seconds.",
+            ),
+            &["route_id", "method"],
+        )?;
+        let auth_rejections_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_auth_rejections_total",
+                "Total auth rejections by reason.",
+            ),
+            &["reason"],
+        )?;
+        let reload_events_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_reload_events_total",
+                "Total reload events by outcome.",
+            ),
+            &["outcome"],
+        )?;
+        let last_reload_success_timestamp_seconds = Gauge::new(
+            "guardrail_last_reload_success_timestamp_seconds",
+            "Timestamp of last successful reload.",
+        )?;
+        let readiness_failures_total = IntCounterVec::new(
+            Opts::new(
+                "guardrail_readiness_failures_total",
+                "Total readiness check failures by cause.",
+            ),
+            &["cause"],
+        )?;
+
         registry.register(Box::new(requests_total.clone()))?;
         registry.register(Box::new(request_latency_seconds.clone()))?;
         registry.register(Box::new(upstream_failures_total.clone()))?;
@@ -84,6 +131,12 @@ impl Metrics {
         registry.register(Box::new(inflight_requests.clone()))?;
         registry.register(Box::new(readiness.clone()))?;
         registry.register(Box::new(shutdown_transitions_total.clone()))?;
+        registry.register(Box::new(policy_latency_seconds.clone()))?;
+        registry.register(Box::new(upstream_latency_seconds.clone()))?;
+        registry.register(Box::new(auth_rejections_total.clone()))?;
+        registry.register(Box::new(reload_events_total.clone()))?;
+        registry.register(Box::new(last_reload_success_timestamp_seconds.clone()))?;
+        registry.register(Box::new(readiness_failures_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -95,6 +148,12 @@ impl Metrics {
             inflight_requests,
             readiness,
             shutdown_transitions_total,
+            policy_latency_seconds,
+            upstream_latency_seconds,
+            auth_rejections_total,
+            reload_events_total,
+            last_reload_success_timestamp_seconds,
+            readiness_failures_total,
         })
     }
 
@@ -160,6 +219,56 @@ impl Metrics {
             .with_label_values(&[state])
             .inc();
     }
+
+    pub fn record_policy_latency(&self, route_id: &str, method: &str, verdict: &str, seconds: f64) {
+        self.policy_latency_seconds
+            .with_label_values(&[route_id, method, verdict])
+            .observe(seconds);
+    }
+
+    pub fn record_upstream_latency(&self, route_id: &str, method: &str, seconds: f64) {
+        self.upstream_latency_seconds
+            .with_label_values(&[route_id, method])
+            .observe(seconds);
+    }
+
+    pub fn record_auth_rejection(&self, reason: &str) {
+        self.auth_rejections_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    pub fn record_reload_event(&self, outcome: &str) {
+        self.reload_events_total.with_label_values(&[outcome]).inc();
+    }
+
+    pub fn record_reload_success_now(&self) {
+        self.last_reload_success_timestamp_seconds
+            .set(chrono::Utc::now().timestamp() as f64);
+    }
+
+    pub fn record_readiness_failure(&self, cause: &str) {
+        self.readiness_failures_total
+            .with_label_values(&[cause])
+            .inc();
+    }
+
+    #[allow(dead_code)]
+    pub fn record_policy_and_upstream_latency(
+        &self,
+        route_id: &str,
+        method: &str,
+        verdict: &str,
+        policy_seconds: f64,
+        upstream_seconds: f64,
+    ) {
+        self.policy_latency_seconds
+            .with_label_values(&[route_id, method, verdict])
+            .observe(policy_seconds);
+        self.upstream_latency_seconds
+            .with_label_values(&[route_id, method])
+            .observe(upstream_seconds);
+    }
 }
 
 #[cfg(test)]
@@ -192,5 +301,32 @@ mod tests {
         assert!(snapshot.contains("operation=\"insert_execution\""));
         assert!(snapshot.contains("operation=\"insert_execution_bundle\""));
         assert!(snapshot.contains("state=\"ready\""));
+    }
+
+    #[test]
+    fn test_metrics_snapshot_contains_phase6_series() {
+        let metrics = Metrics::new().unwrap();
+        metrics.record_policy_latency("route-a", "POST", "ALLOWED", 0.010);
+        metrics.record_upstream_latency("route-a", "POST", 0.050);
+        metrics.record_auth_rejection("missing_api_key");
+        metrics.record_reload_event("succeeded");
+        metrics.record_reload_success_now();
+        metrics.record_readiness_failure("database_unavailable");
+
+        let snapshot = metrics.render().unwrap();
+        assert!(snapshot.contains("guardrail_policy_latency_seconds"));
+        assert!(snapshot.contains("guardrail_upstream_latency_seconds"));
+        assert!(snapshot.contains("guardrail_auth_rejections_total"));
+        assert!(snapshot.contains("guardrail_reload_events_total"));
+        assert!(snapshot.contains("guardrail_last_reload_success_timestamp_seconds"));
+        assert!(snapshot.contains("guardrail_readiness_failures_total"));
+    }
+
+    #[test]
+    fn test_metrics_snapshot_contains_reload_success_timestamp() {
+        let metrics = Metrics::new().unwrap();
+        metrics.record_reload_success_now();
+        let snapshot = metrics.render().unwrap();
+        assert!(snapshot.contains("guardrail_last_reload_success_timestamp_seconds"));
     }
 }
