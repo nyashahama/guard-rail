@@ -605,15 +605,22 @@ impl PostgresAuditStore {
             });
         }
 
-        let predecessor_hash: Option<String> = if from_id > 1 {
-            sqlx::query_scalar("select record_hash from execution_audit where id = $1")
-                .bind(from_id - 1)
+        let predecessor_hash: Option<String> =
+            match sqlx::query_scalar("select record_hash from execution_audit where id < $1 order by id desc limit 1")
+                .bind(from_id)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(IntegrityCheckError::Storage)?
-        } else {
-            None
-        };
+            {
+                Some(hash) => Some(hash),
+                None => sqlx::query_scalar(
+                    "select deleted_through_record_hash from audit_retention_checkpoints where boundary_execution_id = $1",
+                )
+                .bind(&query.from_execution_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(IntegrityCheckError::Storage)?,
+            };
 
         let rows = sqlx::query(
             r#"
