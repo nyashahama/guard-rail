@@ -41,6 +41,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.trust-scroll-area {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.trust-scroll-area::-webkit-scrollbar {
+  height: 6px;
+}
+
+.trust-scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
 /* Background Grid */
 .bg-grid-pattern {
   position: absolute;

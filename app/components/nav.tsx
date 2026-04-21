@@ -3,10 +3,13 @@
 export function Nav() {
   return (
     <nav
-      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-12 h-[68px] mix-blend-difference"
+      className="fixed left-0 right-0 top-0 z-50 flex h-[64px] items-center justify-between border-b border-white/[0.08] bg-background/80 px-4 backdrop-blur-md sm:h-[68px] sm:px-6 md:border-none md:bg-transparent md:backdrop-blur-none md:mix-blend-difference lg:px-12"
     >
       {/* Logo */}
-      <a href="#" className="flex items-center gap-2.5 font-sans font-bold text-[13px] tracking-[0.15em] uppercase no-underline text-white">
+      <a
+        href="#"
+        className="flex items-center gap-2 font-sans text-[12px] font-bold tracking-[0.15em] text-white uppercase no-underline sm:gap-2.5 sm:text-[13px]"
+      >
         <div className="w-[26px] h-[26px] border-2 border-cyan flex items-center justify-center rounded-[4px]">
           <div className="w-2 h-2 bg-cyan" />
         </div>
@@ -14,8 +17,8 @@ export function Nav() {
       </a>
 
       {/* Right side */}
-      <div className="flex items-center gap-8">
-        <ul className="hidden md:flex gap-7 list-none">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4 lg:gap-8">
+        <ul className="hidden list-none gap-5 lg:flex lg:gap-7">
           {[
             { label: "How It Works", href: "#how" },
             { label: "Features", href: "#features" },
@@ -33,9 +36,10 @@ export function Nav() {
         </ul>
         <a
           href="mailto:founders@guardrail.co.za"
-          className="font-mono text-[11px] font-bold tracking-[0.1em] uppercase text-white border border-white/20 px-5 py-2.5 no-underline hover:bg-white hover:text-black transition-all duration-300"
+          className="border border-white/20 px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] text-white uppercase no-underline transition-all duration-300 hover:bg-white hover:text-black sm:px-5 sm:py-2.5 sm:text-[11px]"
         >
-          Get Access
+          <span className="sm:hidden">Access</span>
+          <span className="hidden sm:inline">Get Access</span>
         </a>
       </div>
     </nav>

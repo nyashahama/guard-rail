@@ -23,8 +23,8 @@ export function Problem() {
 
   return (
     <section className="relative z-[1]">
-      <div ref={ref} className="px-20 py-[120px] max-w-[1400px] mx-auto">
-        <div className="grid gap-16 items-start" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div ref={ref} className="px-6 sm:px-8 lg:px-20 py-20 sm:py-[120px] max-w-[1400px] mx-auto">
+        <div className="grid gap-10 lg:gap-16 items-start lg:grid-cols-2">
           {/* Left — Copy */}
           <div>
             <span className="font-mono text-[11px] tracking-[0.25em] uppercase text-crimson block mb-4">
@@ -32,16 +32,17 @@ export function Problem() {
             </span>
             <h2
               className="font-extrabold tracking-[-0.025em] leading-[1.0] mb-6"
-              style={{ fontSize: "clamp(40px, 5vw, 72px)" }}
+              style={{ fontSize: "clamp(36px, 5vw, 72px)" }}
             >
               Automation is scaling.
               <br />
               <span className="text-white/28">Control is not.</span>
             </h2>
             <p className="text-[17px] text-white/55 leading-[1.65] font-light max-w-[460px] mt-6">
-              Enterprise architecture has fundamentally shifted. Zapier, Make,
-              custom scripts, and AI agents are driving operations. Yet standard
-              perimeter security is blind to intra-workflow execution context.
+              Operations now move through Zapier, Make, custom scripts, and AI
+              agents. Those flows still need request-level inspection because
+              perimeter controls do not understand what happens inside the
+              workflow.
             </p>
             <p className="text-[17px] text-white/55 leading-[1.65] font-light max-w-[460px] mt-4">
               When an unverified third-party app executes a workflow across your
@@ -53,20 +54,20 @@ export function Problem() {
           </div>
 
           {/* Right — Stat Cards */}
-          <div className="flex flex-col gap-4">
-            {/* 412% */}
-            <div className="obs-target relative bg-surface border border-white/5 p-10 overflow-hidden transition-colors duration-300 hover:border-crimson/40">
+          <div className="grid gap-4">
+            {/* Fast-moving sprawl */}
+            <div className="obs-target relative bg-surface border border-white/5 p-6 sm:p-10 overflow-hidden transition-colors duration-300 hover:border-crimson/40">
               <div
                 className="absolute top-0 right-0 w-[60px] h-[60px] bg-crimson/8"
                 style={{ borderRadius: "0 0 0 100%", filter: "blur(20px)" }}
               />
-              <div className="font-mono text-[56px] font-bold text-crimson leading-[1] mb-2.5 tracking-[-0.02em]">
-                412%
+              <div className="font-mono text-[15px] tracking-[0.18em] uppercase text-crimson mb-3">
+                Fast-moving sprawl
               </div>
-              <div className="text-[18px] font-semibold mb-2">Increase in API Sprawl</div>
-              <div className="font-mono text-[12px] text-white/40 leading-[1.6]">
-                In South African banking networks over the last 36 months, leading
-                to impossible audit trails.
+              <div className="text-[18px] font-semibold mb-2">More routes, more blind spots</div>
+              <div className="font-mono text-[12px] text-white/40 leading-[1.6] max-w-[34ch]">
+                New integrations and workflow tools arrive faster than teams can
+                review them, which makes audit trails harder to trust.
               </div>
               <div className="absolute bottom-5 right-5 text-crimson/40">
                 <svg width="40" height="40" fill="currentColor" viewBox="0 0 256 256">
@@ -75,24 +76,24 @@ export function Problem() {
               </div>
             </div>
 
-            {/* 73% */}
-            <div className="obs-target relative bg-surface border border-white/5 p-10 overflow-hidden transition-colors duration-300 hover:border-crimson/40">
+            {/* Unverified third-party logic */}
+            <div className="obs-target relative bg-surface border border-white/5 p-6 sm:p-10 overflow-hidden transition-colors duration-300 hover:border-crimson/40">
               <div
                 className="absolute top-0 right-0 w-[60px] h-[60px] bg-crimson/8"
                 style={{ borderRadius: "0 0 0 100%", filter: "blur(20px)" }}
               />
-              <div className="font-mono text-[56px] font-bold text-white leading-[1] mb-2.5 tracking-[-0.02em]">
-                73%
+              <div className="font-mono text-[15px] tracking-[0.18em] uppercase text-white/70 mb-3">
+                Unverified third-party logic
               </div>
-              <div className="text-[18px] font-semibold mb-2">Unverified 3rd Party Logic</div>
-              <div className="font-mono text-[12px] text-white/40 leading-[1.6]">
-                Of mission-critical data transfers rely on external webhooks
-                without payload-level inspection.
+              <div className="text-[18px] font-semibold mb-2">External steps still need inspection</div>
+              <div className="font-mono text-[12px] text-white/40 leading-[1.6] max-w-[34ch]">
+                External webhooks and partner automations can move critical data
+                without any payload-level check unless the runtime is in line.
               </div>
             </div>
 
             {/* Shadow Workflows */}
-            <div className="obs-target relative bg-surface border border-white/5 overflow-hidden transition-colors duration-300 hover:border-crimson/40 flex items-center justify-between px-9 py-6">
+            <div className="obs-target relative bg-surface border border-white/5 overflow-hidden transition-colors duration-300 hover:border-crimson/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 px-6 sm:px-9 py-6">
               <div
                 className="absolute top-0 right-0 w-[60px] h-[60px] bg-crimson/8"
                 style={{ borderRadius: "0 0 0 100%", filter: "blur(20px)" }}
@@ -100,7 +101,7 @@ export function Problem() {
               <div>
                 <div className="text-[18px] font-semibold text-crimson">Shadow Workflows</div>
                 <div className="font-mono text-[12px] text-white/40 mt-1">
-                  Operations bypassing IT governance entirely.
+                  Operations bypassing central review and control.
                 </div>
               </div>
               <div className="flex-shrink-0 text-crimson/40">
