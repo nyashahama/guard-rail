@@ -35,7 +35,7 @@ export function Hero() {
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 sm:gap-4">
             <a
-              href="mailto:founders@guardrail.co.za?subject=Pilot Request"
+              href="mailto:nyashahama45@gmail.com?subject=Pilot Request"
               className="font-mono text-[12px] font-bold tracking-[0.1em] uppercase text-black bg-white px-7 py-3.5 no-underline inline-flex items-center justify-center gap-2.5 hover:bg-cyan transition-all duration-300"
               style={{ ["--tw-shadow" as string]: "none" }}
               onMouseEnter={(e) => {

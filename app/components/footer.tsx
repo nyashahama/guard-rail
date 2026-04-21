@@ -19,7 +19,7 @@ export function Footer() {
           { label: "Overview", href: "#" },
           { label: "Privacy", href: "#" },
           { label: "System Status", href: "#" },
-          { label: "Contact", href: "mailto:founders@guardrail.co.za" },
+          { label: "Contact", href: "mailto:nyashahama45@gmail.com" },
         ].map((link) => (
           <li key={link.label}>
             <a

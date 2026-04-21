@@ -71,7 +71,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:founders@guardrail.co.za?subject=POV Pilot"
+                href="mailto:nyashahama45@gmail.com?subject=POV Pilot"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
                 Start Pilot
@@ -124,7 +124,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:founders@guardrail.co.za?subject=Enterprise"
+                href="mailto:nyashahama45@gmail.com?subject=Enterprise"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 bg-white text-black hover:bg-cyan"
                 onMouseEnter={(e) =>
                   ((e.currentTarget as HTMLElement).style.boxShadow =
@@ -161,7 +161,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:founders@guardrail.co.za?subject=OEM"
+                href="mailto:nyashahama45@gmail.com?subject=OEM"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
                 Talk to us
@@ -203,7 +203,7 @@ export function Pricing() {
             </div>
             <div className="flex flex-col gap-3 items-start flex-shrink-0">
               <a
-                href="mailto:founders@guardrail.co.za?subject=Pilot Request"
+                href="mailto:nyashahama45@gmail.com?subject=Pilot Request"
                 className="font-mono text-[12px] font-bold tracking-[0.1em] uppercase text-black bg-white px-7 py-3.5 no-underline inline-flex items-center gap-2.5 transition-all duration-300 hover:bg-cyan"
                 onMouseEnter={(e) =>
                   ((e.currentTarget as HTMLElement).style.boxShadow =
@@ -225,7 +225,7 @@ export function Pricing() {
                 Request Data Room
               </a>
               <span className="font-mono text-[10px] tracking-[0.1em] text-white/25 mt-1">
-                founders@guardrail.co.za
+                nyashahama45@gmail.com
               </span>
             </div>
           </div>
