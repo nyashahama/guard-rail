@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint app next.config.ts postcss.config.mjs eslint.config.mjs"
   },
   "dependencies": {
     "next": "16.2.4",
