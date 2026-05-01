@@ -23,6 +23,7 @@ database:
 
 audit:
   write_timeout_ms: 250
+  persistence_mode: best_effort
 
 admin:
   token: "change-me"

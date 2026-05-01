@@ -116,9 +116,13 @@ bash scripts/verification/dependency-audits.sh
 
 Expected:
 - writes `dependency-audits.json`
-- exits `0` if prerequisites are present and audits pass
-- exits `0` with status `skipped` if prerequisites are missing
+- exits `0` when Rust and Node dependency audits pass
+- exits `0` with status `skipped` in default mode when audit prerequisites are missing or skipped
+- exits non-zero when `cargo audit` reports Rust dependency vulnerabilities
+- exits non-zero when `npm audit --audit-level=high` reports high-or-above Node dependency vulnerabilities
+- exits non-zero when `REQUIRE_DEPENDENCY_AUDIT=true` and audit prerequisites are missing or skipped
 - `cargo audit` covers Rust dependencies
+- `RUSTSEC-2023-0071` is explicitly ignored because it is pulled through SQLx's optional MySQL package in `Cargo.lock`; Guard Rail enables only Postgres SQLx features and `sqlx-mysql` is not in the active dependency tree
 - `npm audit --audit-level=high` covers Node dependencies
 
 ## Running The Full Suite

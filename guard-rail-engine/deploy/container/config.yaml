@@ -21,6 +21,7 @@ database:
 
 audit:
   write_timeout_ms: 250
+  persistence_mode: required_before_response
 
 admin:
   token: ""

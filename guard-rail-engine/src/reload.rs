@@ -107,9 +107,6 @@ pub async fn apply_reload_candidate(
     crate::tenant::cache::validate_route_auth_state(&new_routes, &snapshot)
         .map_err(|err| format!("{err:?}"))?;
 
-    crate::tenant::cache::validate_all_routes_bound(&new_routes, &snapshot)
-        .map_err(|err| err.to_string())?;
-
     crate::routes::RouteValidator::validate_upstream_security(&new_routes, environment)
         .map_err(|err| err.to_string())?;
 
@@ -183,7 +180,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_apply_reload_candidate_rejects_unbound_tenant_route() {
+    async fn test_apply_reload_candidate_allows_unbound_tenant_bound_route() {
         let routes = std::sync::Arc::new(tokio::sync::RwLock::new(RouteTable::from_routes(vec![])));
         let policies =
             std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
@@ -207,7 +204,43 @@ mod tests {
         )
         .await;
 
+        assert!(result.is_ok());
+        assert!(routes.read().await.lookup("tenant-route").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_apply_reload_candidate_rejects_bound_public_route() {
+        let routes = std::sync::Arc::new(tokio::sync::RwLock::new(RouteTable::from_routes(vec![])));
+        let policies =
+            std::sync::Arc::new(tokio::sync::RwLock::new(PolicySet::from_policies(vec![])));
+        let tenant_cache = crate::tenant::cache::TenantAuthCache::default();
+        let tenant_id = uuid::Uuid::new_v4();
+        let mut snapshot = crate::tenant::cache::TenantAuthSnapshot::default();
+        snapshot
+            .route_bindings
+            .insert("open-route".into(), tenant_id);
+        tenant_cache.replace(snapshot).await;
+
+        let new_routes = RouteTable::from_routes(vec![crate::routes::Route::new(
+            "open-route".into(),
+            crate::routes::RouteAuthMode::Public,
+            "http://example.com".into(),
+            vec!["POST".into()],
+            vec![],
+        )]);
+
+        let result = apply_reload_candidate(
+            new_routes,
+            PolicySet::from_policies(vec![]),
+            &routes,
+            &policies,
+            &tenant_cache,
+            crate::config::RuntimeEnvironment::Development,
+        )
+        .await;
+
         assert!(result.is_err());
+        assert!(routes.read().await.lookup("open-route").is_none());
     }
 
     #[tokio::test]
@@ -229,7 +262,7 @@ mod tests {
             crate::routes::RouteAuthMode::TenantBound,
             "http://example.com/rejected".into(),
             vec!["POST".into()],
-            vec![],
+            vec!["missing-policy".into()],
         )]);
 
         let result = apply_reload_candidate(

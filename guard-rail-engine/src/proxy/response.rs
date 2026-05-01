@@ -75,6 +75,20 @@ pub fn bad_gateway_response(execution_id: &str, message: &str) -> Response {
         .into_response()
 }
 
+pub fn audit_persistence_error_response(execution_id: &str) -> Response {
+    let body = ErrorResponse {
+        status: "error".to_string(),
+        execution_id: execution_id.to_string(),
+        message: "Audit persistence failed".to_string(),
+    };
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("x-guardrail-execution-id", execution_id.to_string())],
+        Json(body),
+    )
+        .into_response()
+}
+
 pub fn method_not_allowed_response(execution_id: &str) -> Response {
     let body = RejectResponse {
         status: "rejected".to_string(),
