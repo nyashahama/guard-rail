@@ -88,9 +88,9 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
             );
         }
 
-        if !has_non_blank_entries(&config.replay.redact_request_headers)
-            || !has_non_blank_entries(&config.replay.redact_response_headers)
-            || !has_non_blank_entries(&config.replay.redact_json_fields)
+        if !has_only_non_blank_entries(&config.replay.redact_request_headers)
+            || !has_only_non_blank_entries(&config.replay.redact_response_headers)
+            || !has_only_non_blank_entries(&config.replay.redact_json_fields)
             || config.replay.redaction_text.trim().is_empty()
         {
             return Err(
@@ -120,8 +120,8 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn has_non_blank_entries(values: &[String]) -> bool {
-    values.iter().any(|value| !value.trim().is_empty())
+fn has_only_non_blank_entries(values: &[String]) -> bool {
+    !values.is_empty() && values.iter().all(|value| !value.trim().is_empty())
 }
 
 fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
@@ -626,6 +626,29 @@ replay:
             },
             TestConfigOptions {
                 redact_json_fields: r#"["  "]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_mixed_blank_replay_redaction_entries() {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"["authorization", "   "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"["set-cookie", " "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["token", "\t"]"#,
                 ..Default::default()
             },
         ];
