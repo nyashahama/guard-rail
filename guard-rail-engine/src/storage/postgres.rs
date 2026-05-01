@@ -164,9 +164,24 @@ impl PostgresAuditStore {
         finalization_error: Option<&str>,
     ) -> Result<(), sqlx::Error> {
         let status_value = status.as_str();
-        let finalized_at = match status {
-            ExecutionIntentStatus::Finalized => Some(chrono::Utc::now()),
-            ExecutionIntentStatus::FinalizationFailed => None,
+        let (finalization_error, finalized_at) = match status {
+            ExecutionIntentStatus::Finalized => {
+                if finalization_error.is_some() {
+                    return Err(sqlx::Error::Protocol(
+                        "finalized execution intents cannot include a finalization error".into(),
+                    ));
+                }
+                (None, Some(chrono::Utc::now()))
+            }
+            ExecutionIntentStatus::FinalizationFailed => {
+                let Some(finalization_error) = finalization_error else {
+                    return Err(sqlx::Error::Protocol(
+                        "finalization_failed execution intents require a finalization error"
+                            .into(),
+                    ));
+                };
+                (Some(finalization_error), None)
+            }
         };
 
         let result = tokio::time::timeout(

@@ -497,6 +497,24 @@ async fn execution_intent_can_be_inserted_and_finalized() {
         )
         .await;
     assert!(missing_update.is_err());
+
+    let finalized_with_error = store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::Finalized,
+            Some("should not be allowed"),
+        )
+        .await;
+    assert!(finalized_with_error.is_err());
+
+    let failed_without_error = store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::FinalizationFailed,
+            None,
+        )
+        .await;
+    assert!(failed_without_error.is_err());
 }
 
 #[tokio::test]

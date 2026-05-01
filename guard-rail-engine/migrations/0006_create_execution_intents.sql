@@ -15,7 +15,12 @@ create table if not exists execution_intents (
     finalization_error text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
-    finalized_at timestamptz
+    finalized_at timestamptz,
+    check (
+        (status = 'pending' and finalization_error is null and finalized_at is null)
+        or (status = 'finalized' and finalization_error is null and finalized_at is not null)
+        or (status = 'finalization_failed' and finalization_error is not null and finalized_at is null)
+    )
 );
 
 create index if not exists idx_execution_intents_status_created_at_desc
