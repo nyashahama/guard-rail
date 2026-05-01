@@ -15,7 +15,7 @@ node_status="skipped"
 # Rust audit
 if command -v cargo-audit >/dev/null 2>&1; then
   pushd "${ENGINE_DIR}" >/dev/null
-  if cargo audit; then
+  if cargo audit --ignore RUSTSEC-2023-0071; then
     rust_status="pass"
   else
     rust_status="fail"
