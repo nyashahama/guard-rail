@@ -59,16 +59,16 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 
 pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::query_scalar::<_, i64>(
-        "select count(*) from information_schema.tables where table_name = 'execution_audit'",
+        "select count(*) from information_schema.tables where table_name in ('execution_audit', 'execution_intents')",
     )
     .fetch_one(pool)
     .await
     .and_then(|count| {
-        if count == 1 {
+        if count == 2 {
             Ok(())
         } else {
             Err(sqlx::Error::Protocol(
-                "execution_audit table missing".into(),
+                "required audit tables missing".into(),
             ))
         }
     })

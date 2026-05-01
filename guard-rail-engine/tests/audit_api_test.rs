@@ -574,6 +574,31 @@ async fn test_stage3_migration_creates_tenant_tables() {
 }
 
 #[tokio::test]
+async fn schema_ready_requires_execution_intents_table() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    reset_test_database(&pool).await;
+
+    sqlx::query("drop table execution_intents")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let err = guard_rail_engine::storage::postgres::assert_schema_ready(&pool)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("required audit tables missing"));
+}
+
+#[tokio::test]
 async fn test_audit_list_returns_newest_first() {
     let harness = build_test_router_with_seeded_audit_rows().await;
 
