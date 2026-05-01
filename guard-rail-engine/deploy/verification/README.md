@@ -40,6 +40,8 @@ Each scenario writes a JSON summary with:
 - `timestamp`
 - `metrics`
 
+Wrapper-backed checks also retain the captured `cargo test` output beside the JSON artifact as `<scenario>.log` in the same Phase 7 result directory.
+
 ## Scenarios
 
 ### Allowed And Blocked Load
@@ -117,8 +119,10 @@ bash scripts/verification/hard-audit-mode.sh
 
 Expected:
 - writes `hard-audit-mode.json`
+- writes `hard-audit-mode.log`
 - exits `0`
 - runs the focused smoke test for strict fail-closed audit behavior before forwarding upstream traffic
+- requires concrete proof in captured cargo output that the exact smoke test ran and passed
 - fails if `required_audit_mode_does_not_forward_without_pre_forward_intent` regresses
 
 ### Replay Redaction
@@ -130,8 +134,10 @@ bash scripts/verification/replay-redaction.sh
 
 Expected:
 - writes `replay-redaction.json`
+- writes `replay-redaction.log`
 - exits `0`
 - runs the focused replay artifact redaction tests already present in the repo
+- requires concrete proof in captured cargo output that both focused replay tests ran and passed
 - verifies both request and response JSON persistence stay redacted
 
 ### Dependency Audits
@@ -170,3 +176,5 @@ Each scenario JSON contains:
 - `metrics`: scenario-specific measurements
 
 A failing suite means at least one scenario exited non-zero. Investigate the corresponding JSON file and any console output for the specific failure.
+
+For wrapper-backed failures, inspect the sibling `.log` artifact in the same timestamped result directory for the preserved `cargo test` output.

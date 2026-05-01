@@ -17,16 +17,12 @@ if [[ -z "${TEST_DATABASE_URL:-}" && -n "${GUARDRAIL_DATABASE__URL:-}" ]]; then
 fi
 
 scenario="replay-redaction"
-log_file="$(mktemp)"
+artifact_dir="$(phase7_result_dir)"
+log_file="${artifact_dir}/${scenario}.log"
 tests=(
   "test_replay_artifacts_redact_sensitive_request_json_before_persistence"
   "test_replay_artifacts_redact_sensitive_response_json_before_persistence"
 )
-
-cleanup() {
-  rm -f "${log_file}"
-}
-trap cleanup EXIT
 
 pushd "${ENGINE_DIR}" >/dev/null
 set +e
@@ -43,14 +39,45 @@ done
 set -e
 popd >/dev/null
 
-if [[ "${status:-}" != "fail" ]]; then
+if python3 - "${log_file}" "${tests[@]}" <<'PY'
+import pathlib
+import re
+import sys
+
+log_path = pathlib.Path(sys.argv[1])
+tests = sys.argv[2:]
+output = log_path.read_text()
+
+if output.count("running 1 test") != len(tests):
+    sys.exit(1)
+
+for test_name in tests:
+    if re.search(rf"test\s+{re.escape(test_name)}\s+\.\.\.\s+ok\b", output) is None:
+        sys.exit(1)
+
+if output.count("test result: ok. 1 passed;") != len(tests):
+    sys.exit(1)
+
+sys.exit(0)
+PY
+then
+  matched_expected_tests=true
+else
+  matched_expected_tests=false
+fi
+
+if [[ "${status:-}" != "fail" && "${matched_expected_tests}" == "true" ]]; then
   exit_code=0
   status="pass"
+elif [[ "${status:-}" != "fail" ]]; then
+  exit_code=1
+  status="fail"
 fi
 
 metrics="$(python3 - "${exit_code}" "${database_url_source}" "${log_file}" "${tests[@]}" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 exit_code = int(sys.argv[1])
@@ -66,7 +93,14 @@ print(json.dumps({
     ),
     "tests": tests,
     "exit_code": exit_code,
-    "matched_pass_lines": output.count("test result: ok"),
+    "log_path": str(log_path),
+    "running_1_test_count": output.count("running 1 test"),
+    "matched_test_count": sum(
+        1
+        for test_name in tests
+        if re.search(rf"test\s+{re.escape(test_name)}\s+\.\.\.\s+ok\b", output) is not None
+    ),
+    "matched_pass_summary_count": output.count("test result: ok. 1 passed;"),
     "test_database_url_configured": database_url_source != "missing",
     "database_url_source": database_url_source,
 }))
