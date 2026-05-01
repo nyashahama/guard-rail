@@ -109,10 +109,20 @@ fn default_max_connections() -> u32 {
     10
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditPersistenceMode {
+    #[default]
+    BestEffort,
+    RequiredBeforeResponse,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuditConfig {
     #[serde(default = "default_write_timeout_ms")]
     pub write_timeout_ms: u64,
+    #[serde(default)]
+    pub persistence_mode: AuditPersistenceMode,
 }
 
 fn default_write_timeout_ms() -> u64 {
@@ -340,6 +350,21 @@ impl AppConfig {
         if let Ok(val) = std::env::var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS") {
             config.audit.write_timeout_ms = val.parse()?;
         }
+        if let Ok(val) = std::env::var("GUARDRAIL_AUDIT__PERSISTENCE_MODE") {
+            config.audit.persistence_mode = match val.trim().to_ascii_lowercase().as_str() {
+                "best_effort" => AuditPersistenceMode::BestEffort,
+                "required_before_response" => AuditPersistenceMode::RequiredBeforeResponse,
+                other => {
+                    return Err(
+                        format!(
+                            "invalid GUARDRAIL_AUDIT__PERSISTENCE_MODE value '{}'; expected best_effort or required_before_response",
+                            other
+                        )
+                        .into(),
+                    );
+                }
+            };
+        }
         if let Ok(val) = std::env::var("GUARDRAIL_ADMIN__TOKEN") {
             config.admin.token = val;
         }
@@ -417,6 +442,7 @@ mod tests {
             std::env::remove_var("GUARDRAIL_DATABASE__URL");
             std::env::remove_var("GUARDRAIL_DATABASE__MAX_CONNECTIONS");
             std::env::remove_var("GUARDRAIL_AUDIT__WRITE_TIMEOUT_MS");
+            std::env::remove_var("GUARDRAIL_AUDIT__PERSISTENCE_MODE");
             std::env::remove_var("GUARDRAIL_ADMIN__TOKEN");
             std::env::remove_var("GUARDRAIL_TENANT_AUTH__HEADER_NAME");
             std::env::remove_var("GUARDRAIL_RATE_LIMIT__REQUESTS_PER_MINUTE");
@@ -522,6 +548,69 @@ rate_limit: {}
         assert_eq!(config.logging.format, "json");
         assert_eq!(config.database.max_connections, 10);
         assert_eq!(config.audit.write_timeout_ms, 250);
+    }
+
+    #[test]
+    fn test_audit_persistence_mode_defaults_to_best_effort() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 8080
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://test:test@localhost:5432/test"
+audit: {}
+admin:
+  token: "default-admin"
+rate_limit: {}
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(
+            config.audit.persistence_mode,
+            AuditPersistenceMode::BestEffort
+        );
+    }
+
+    #[test]
+    fn test_audit_persistence_mode_env_override() {
+        let _env = EnvTestGuard::new();
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 8080
+routes_file: "./routes.yaml"
+policies_dir: "./policies/"
+forwarding: {}
+logging: {}
+database:
+  url: "postgres://test:test@localhost:5432/test"
+audit: {}
+admin:
+  token: "default-admin"
+rate_limit: {}
+"#;
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(yaml.as_bytes()).unwrap();
+
+        unsafe {
+            std::env::set_var(
+                "GUARDRAIL_AUDIT__PERSISTENCE_MODE",
+                "required_before_response",
+            );
+        }
+
+        let config = AppConfig::load(tmp.path()).unwrap();
+        assert_eq!(
+            config.audit.persistence_mode,
+            AuditPersistenceMode::RequiredBeforeResponse
+        );
     }
 
     #[test]
