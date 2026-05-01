@@ -19,7 +19,7 @@ use audit::hash::hash_string;
 use clap::Parser;
 use proxy::AppState;
 use reqwest::Client;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tenant::cache::{TenantAuthCache, validate_route_auth_state};
@@ -109,11 +109,14 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
             );
         }
 
-        if matches!(admin_server.host.trim(), "0.0.0.0" | "::") {
-            return Err(
-                "invalid admin listener for production runtime; admin listener cannot bind to 0.0.0.0 or ::"
-                    .to_string(),
-            );
+        let admin_host = admin_server.host.trim();
+        if let Ok(ip_addr) = admin_host.parse::<IpAddr>() {
+            if ip_addr.is_unspecified() {
+                return Err(
+                    "invalid admin listener for production runtime; admin listener cannot bind to an unspecified address"
+                        .to_string(),
+                );
+            }
         }
     }
 
@@ -121,7 +124,10 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
 }
 
 fn has_only_non_blank_entries(values: &[String]) -> bool {
-    !values.is_empty() && values.iter().all(|value| !value.trim().is_empty())
+    !values.is_empty()
+        && values
+            .iter()
+            .all(|value| !value.trim().is_empty() && value.trim() == value)
 }
 
 fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
@@ -660,6 +666,29 @@ replay:
     }
 
     #[test]
+    fn test_validate_startup_security_production_rejects_padded_replay_redaction_entries() {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"[" authorization "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"[" set-cookie"]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["token "]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
     fn test_configured_audit_write_timeout_uses_configured_value() {
         let cfg = test_config(TestConfigOptions {
             audit_write_timeout_ms: 987,
@@ -674,7 +703,7 @@ replay:
 
     #[test]
     fn test_validate_startup_security_production_rejects_wildcard_admin_listener_hosts() {
-        for host in ["0.0.0.0", "::"] {
+        for host in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0"] {
             let cfg = test_config(TestConfigOptions {
                 admin_server_host: Some(host),
                 ..Default::default()
