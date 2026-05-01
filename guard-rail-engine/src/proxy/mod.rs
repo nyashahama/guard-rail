@@ -63,9 +63,6 @@ pub struct AppState {
     pub replay: ReplayConfig,
 }
 
-unsafe impl Send for AppState {}
-unsafe impl Sync for AppState {}
-
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
@@ -333,6 +330,13 @@ fn truncate_utf8_to_max_bytes(input: String, max_bytes: usize) -> (String, bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn app_state_is_send_sync_without_unsafe_impls() {
+        assert_send_sync::<AppState>();
+    }
 
     #[test]
     fn redact_persisted_response_body_redacts_json_and_hashes_persisted_body() {
