@@ -6,7 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 ENGINE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
 export PHASE7_SUITE_ID="${PHASE7_SUITE_ID:-$(phase7_timestamp)}"
+export PHASE7_RESULT_ROOT="${PHASE7_RESULT_ROOT:-${REPO_ROOT}/tmp/verification}"
 
 scenario="hard-audit-mode"
 test_target="required_audit_mode_does_not_forward_without_pre_forward_intent"

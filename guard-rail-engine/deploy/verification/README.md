@@ -32,7 +32,7 @@ export PHASE7_PG_CONTAINER=guardrail-postgres
 
 ## Result Artifacts
 
-Verification results are written under `guard-rail-engine/tmp/verification/<timestamp>/`.
+Verification results are written under `<repo-root>/tmp/verification/<timestamp>/`, regardless of the caller's current working directory.
 
 Each scenario writes a JSON summary with:
 - `scenario`
@@ -40,7 +40,7 @@ Each scenario writes a JSON summary with:
 - `timestamp`
 - `metrics`
 
-Wrapper-backed checks also retain the captured `cargo test` output beside the JSON artifact as `<scenario>.log` in the same Phase 7 result directory.
+Wrapper-backed checks also retain the captured `cargo test` output beside the JSON artifact as `<scenario>.log` in the same timestamped result directory.
 
 ## Scenarios
 
@@ -166,7 +166,7 @@ export PHASE7_SUITE_ID=$(date -u +"%Y%m%dT%H%M%SZ")
 bash scripts/verification/run-phase7-suite.sh
 ```
 
-The suite orchestrates all scenarios in order and exits non-zero if any scenario fails. Results are aggregated under `tmp/verification/${PHASE7_SUITE_ID}/`.
+The suite orchestrates all scenarios in order and exits non-zero if any scenario fails. Results are aggregated under `<repo-root>/tmp/verification/${PHASE7_SUITE_ID}/`.
 
 ## Interpreting Results
 
@@ -177,4 +177,4 @@ Each scenario JSON contains:
 
 A failing suite means at least one scenario exited non-zero. Investigate the corresponding JSON file and any console output for the specific failure.
 
-For wrapper-backed failures, inspect the sibling `.log` artifact in the same timestamped result directory for the preserved `cargo test` output.
+For wrapper-backed failures, inspect the sibling `.log` artifact in the same `<repo-root>/tmp/verification/<timestamp>/` directory for the preserved `cargo test` output.
