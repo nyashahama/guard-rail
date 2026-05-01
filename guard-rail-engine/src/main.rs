@@ -109,7 +109,7 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
             );
         }
 
-        let admin_host = admin_server.host.trim();
+        let admin_host = normalize_literal_ip_host(admin_server.host.trim());
         if let Ok(ip_addr) = admin_host.parse::<IpAddr>() {
             if ip_addr.is_unspecified() {
                 return Err(
@@ -128,6 +128,12 @@ fn has_only_non_blank_entries(values: &[String]) -> bool {
         && values
             .iter()
             .all(|value| !value.trim().is_empty() && value.trim() == value)
+}
+
+fn normalize_literal_ip_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host)
 }
 
 fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
@@ -703,7 +709,7 @@ replay:
 
     #[test]
     fn test_validate_startup_security_production_rejects_wildcard_admin_listener_hosts() {
-        for host in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0"] {
+        for host in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "[::]"] {
             let cfg = test_config(TestConfigOptions {
                 admin_server_host: Some(host),
                 ..Default::default()
