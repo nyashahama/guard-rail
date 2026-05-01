@@ -293,6 +293,68 @@ fn redact_replay_headers(
     redacted_headers
 }
 
+fn redact_persisted_response_body(
+    response_body_bytes: &[u8],
+    replay: &ReplayConfig,
+) -> (String, Option<String>, bool) {
+    let response_body_str = String::from_utf8_lossy(response_body_bytes).to_string();
+    let (persisted_body_candidate, truncated) =
+        if response_body_str.len() > replay.max_response_body_bytes {
+            (
+                response_body_str[..replay.max_response_body_bytes].to_string(),
+                true,
+            )
+        } else {
+            (response_body_str, false)
+        };
+
+    let persisted_body = match serde_json::from_str::<serde_json::Value>(&persisted_body_candidate)
+    {
+        Ok(mut json_body) => {
+            redaction::redact_json_fields(
+                &mut json_body,
+                &replay.redact_json_fields,
+                &replay.redaction_text,
+            );
+            serde_json::to_string(&json_body).unwrap_or(persisted_body_candidate)
+        }
+        Err(_) => persisted_body_candidate,
+    };
+
+    let response_body_sha256 = Some(hash_string(&persisted_body));
+    (persisted_body, response_body_sha256, truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_persisted_response_body_redacts_json_and_hashes_persisted_body() {
+        let replay = ReplayConfig {
+            redact_json_fields: vec!["token".into(), "password".into()],
+            redaction_text: "[REDACTED]".into(),
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body(
+            br#"{"email":"ops@example.com","token":"abc123","nested":{"password":"plaintext"}}"#,
+            &replay,
+        );
+
+        assert!(!truncated);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "email": "ops@example.com",
+                "token": "[REDACTED]",
+                "nested": { "password": "[REDACTED]" }
+            })
+        );
+        assert_eq!(sha, Some(hash_string(&body)));
+    }
+}
+
 pub async fn handle_execute(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -983,18 +1045,8 @@ pub async fn handle_execute(
 
             if state.replay.enabled {
                 let redacted_request_body = redact_replay_request_body(&payload, &state.replay);
-                let response_body_bytes = result.body_bytes;
-                let response_body_str = String::from_utf8_lossy(&response_body_bytes).to_string();
-                let max_len = state.replay.max_response_body_bytes;
                 let (response_body, response_body_sha256, truncated) =
-                    if response_body_str.len() > max_len {
-                        let truncated_body = response_body_str[..max_len].to_string();
-                        let sha = Some(hash_string(&truncated_body));
-                        (truncated_body, sha, true)
-                    } else {
-                        let sha = Some(hash_string(&response_body_str));
-                        (response_body_str.clone(), sha, false)
-                    };
+                    redact_persisted_response_body(&result.body_bytes, &state.replay);
 
                 let response_headers = snapshot::filter_headers(
                     result.response.headers(),

@@ -53,16 +53,37 @@ async fn reset_test_database(pool: &sqlx::PgPool) {
     .unwrap();
 }
 
-async fn start_mock_upstream(status: u16, body: &'static str) -> String {
-    let app = axum::Router::new().route(
-        "/{*path}",
-        axum::routing::any(move || async move {
-            (
-                axum::http::StatusCode::from_u16(status).unwrap(),
-                body.to_string(),
-            )
-        }),
-    );
+async fn default_upstream_response() -> impl axum::response::IntoResponse {
+    (
+        axum::http::StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("set-cookie", "session=secret"),
+            ("x-api-key", "upstream-secret"),
+        ],
+        r#"{"ok":true}"#,
+    )
+}
+
+async fn redacted_upstream_response() -> impl axum::response::IntoResponse {
+    (
+        axum::http::StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("set-cookie", "session=secret"),
+            ("x-api-key", "upstream-secret"),
+        ],
+        r#"{"email":"ops@example.com","token":"abc123","nested":{"password":"plaintext"}}"#,
+    )
+}
+
+async fn start_mock_upstream() -> String {
+    let app = axum::Router::new()
+        .route(
+            "/open-redacted",
+            axum::routing::any(redacted_upstream_response),
+        )
+        .route("/{*path}", axum::routing::any(default_upstream_response));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -86,7 +107,7 @@ async fn start_stage4_test_app() -> TestHarness {
     reset_test_database(&pool).await;
 
     let store = PostgresAuditStore::new(pool, std::time::Duration::from_millis(250));
-    let upstream = start_mock_upstream(200, r#"{"ok":true}"#).await;
+    let upstream = start_mock_upstream().await;
 
     let routes = Arc::new(RwLock::new(
         guard_rail_engine::routes::RouteTable::from_routes(vec![
@@ -101,6 +122,13 @@ async fn start_stage4_test_app() -> TestHarness {
                 "open-route".into(),
                 RouteAuthMode::Public,
                 format!("{upstream}/open"),
+                vec!["POST".into()],
+                vec![],
+            ),
+            guard_rail_engine::routes::Route::new(
+                "open-redacted-route".into(),
+                RouteAuthMode::Public,
+                format!("{upstream}/open-redacted"),
                 vec!["POST".into()],
                 vec![],
             ),
@@ -148,7 +176,11 @@ async fn start_stage4_test_app() -> TestHarness {
         replay: ReplayConfig {
             enabled: true,
             capture_request_headers: vec!["content-type".into(), "x-request-id".into()],
-            capture_response_headers: vec!["content-type".into()],
+            capture_response_headers: vec![
+                "content-type".into(),
+                "set-cookie".into(),
+                "x-api-key".into(),
+            ],
             redact_request_headers: vec![
                 "authorization".into(),
                 "cookie".into(),
@@ -356,6 +388,22 @@ async fn test_allowed_execution_persists_response_artifacts_and_strips_authoriza
     assert_eq!(artifact.response_status, Some(200));
     assert!(artifact.response_body.as_deref().unwrap().contains("ok"));
     assert!(artifact.request_headers.get("authorization").is_none());
+    assert_eq!(
+        artifact
+            .response_headers
+            .as_ref()
+            .and_then(|headers| headers.get("set-cookie"))
+            .and_then(|value| value.as_str()),
+        Some("[REDACTED]")
+    );
+    assert_eq!(
+        artifact
+            .response_headers
+            .as_ref()
+            .and_then(|headers| headers.get("x-api-key"))
+            .and_then(|value| value.as_str()),
+        Some("[REDACTED]")
+    );
 }
 
 #[tokio::test]
@@ -396,6 +444,45 @@ async fn test_replay_artifacts_redact_sensitive_request_json_before_persistence(
             "email": "ops@example.com",
             "password": "[REDACTED]",
             "nested": { "token": "[REDACTED]" }
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_replay_artifacts_redact_sensitive_response_json_before_persistence() {
+    let harness = start_stage4_test_app().await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{}/v1/execute/open-redacted-route",
+            harness.base_url
+        ))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let execution_id = response.headers()["x-guardrail-execution-id"]
+        .to_str()
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let artifact = harness
+        .store
+        .get_execution_artifacts(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(artifact.response_body.as_deref().unwrap())
+            .unwrap(),
+        json!({
+            "email": "ops@example.com",
+            "token": "[REDACTED]",
+            "nested": { "password": "[REDACTED]" }
         })
     );
 }
