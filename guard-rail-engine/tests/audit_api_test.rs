@@ -574,7 +574,7 @@ async fn test_stage3_migration_creates_tenant_tables() {
 }
 
 #[tokio::test]
-async fn schema_ready_requires_execution_intents_table() {
+async fn schema_ready_requires_execution_intents_schema() {
     let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -586,7 +586,11 @@ async fn schema_ready_requires_execution_intents_table() {
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     reset_test_database(&pool).await;
 
-    sqlx::query("drop table execution_intents")
+    sqlx::query("alter table execution_intents rename to execution_intents_backup")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("create table execution_intents (execution_id text primary key)")
         .execute(&pool)
         .await
         .unwrap();
@@ -595,7 +599,18 @@ async fn schema_ready_requires_execution_intents_table() {
         .await
         .unwrap_err();
 
-    assert!(err.to_string().contains("required audit tables missing"));
+    assert!(err
+        .to_string()
+        .contains("execution_intents schema missing required columns"));
+
+    sqlx::query("drop table execution_intents")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("alter table execution_intents_backup rename to execution_intents")
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

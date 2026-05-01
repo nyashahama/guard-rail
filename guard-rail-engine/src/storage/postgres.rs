@@ -58,20 +58,55 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 }
 
 pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query_scalar::<_, i64>(
-        "select count(*) from information_schema.tables where table_name in ('execution_audit', 'execution_intents')",
+    let audit_table_count = sqlx::query_scalar::<_, i64>(
+        "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'execution_audit'",
     )
     .fetch_one(pool)
-    .await
-    .and_then(|count| {
-        if count == 2 {
-            Ok(())
-        } else {
-            Err(sqlx::Error::Protocol(
-                "required audit tables missing".into(),
-            ))
-        }
-    })
+    .await?;
+
+    if audit_table_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "required audit tables missing".into(),
+        ));
+    }
+
+    let intent_column_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'execution_intents'
+          and column_name in (
+            'execution_id',
+            'route_id',
+            'tenant_id',
+            'api_key_id',
+            'method',
+            'source_ip',
+            'content_type',
+            'user_agent',
+            'request_size_bytes',
+            'request_body_sha256',
+            'route_config_hash',
+            'policy_set_hash',
+            'status',
+            'finalization_error',
+            'created_at',
+            'updated_at',
+            'finalized_at'
+          )
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if intent_column_count != 17 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing required columns".into(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
