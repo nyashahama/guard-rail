@@ -13,6 +13,7 @@ use crate::policy::engine::{Verdict, evaluate};
 use crate::replay::snapshot;
 use crate::routes::RouteTable;
 use crate::shutdown::LifecycleState;
+use crate::storage::postgres::{ExecutionIntentRecord, ExecutionIntentStatus};
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
 use axum::Json;
@@ -172,6 +173,86 @@ async fn persist_execution_bundle(
                 metrics.record_replay_persist_failure("missing_audit_store");
             }
             Err(())
+        }
+    }
+}
+
+async fn persist_pre_forward_execution_intent(
+    intent: &ExecutionIntentRecord,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
+    mode: AuditPersistenceMode,
+) -> Result<(), ()> {
+    match (mode, audit_store) {
+        (AuditPersistenceMode::BestEffort, _) => Ok(()),
+        (AuditPersistenceMode::RequiredBeforeResponse, Some(store)) => {
+            if let Err(e) = store.insert_execution_intent(intent).await {
+                tracing::error!(
+                    error = %e,
+                    execution_id = %intent.execution_id,
+                    "failed to persist execution intent"
+                );
+                if let Some(metrics) = metrics {
+                    metrics.record_audit_persist_failure("insert_execution_intent");
+                }
+                Err(())
+            } else {
+                Ok(())
+            }
+        }
+        (AuditPersistenceMode::RequiredBeforeResponse, None) => {
+            tracing::error!(
+                execution_id = %intent.execution_id,
+                "audit persistence required but audit store is unavailable"
+            );
+            if let Some(metrics) = metrics {
+                metrics.record_audit_persist_failure("missing_audit_store");
+            }
+            Err(())
+        }
+    }
+}
+
+async fn mark_pre_forward_execution_intent(
+    execution_id: &str,
+    status: ExecutionIntentStatus,
+    finalization_error: Option<&str>,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
+    mode: AuditPersistenceMode,
+) {
+    if mode != AuditPersistenceMode::RequiredBeforeResponse {
+        return;
+    }
+
+    let Some(store) = audit_store else {
+        tracing::error!(
+            execution_id = execution_id,
+            "audit persistence required but audit store is unavailable during execution intent finalization"
+        );
+        if let Some(metrics) = metrics {
+            metrics.record_audit_persist_failure("missing_audit_store");
+        }
+        return;
+    };
+
+    let status_label = match status {
+        ExecutionIntentStatus::Finalized => "finalized",
+        ExecutionIntentStatus::FinalizationFailed => "finalization_failed",
+    };
+
+    if let Err(e) = store
+        .update_execution_intent_status(execution_id, status, finalization_error)
+        .await
+    {
+        tracing::error!(
+            error = %e,
+            execution_id = execution_id,
+            status = status_label,
+            "failed to update execution intent status"
+        );
+        if let Some(metrics) = metrics {
+            metrics.record_audit_persist_failure("update_execution_intent_status");
         }
     }
 }
@@ -778,6 +859,33 @@ pub async fn handle_execute(
         (None, None)
     };
 
+    let execution_intent = ExecutionIntentRecord {
+        execution_id: execution_id.clone(),
+        route_id: route_id.clone(),
+        tenant_id,
+        api_key_id,
+        method: method_str.clone(),
+        source_ip: source_ip.clone(),
+        content_type: content_type.clone(),
+        user_agent: user_agent.clone(),
+        request_size_bytes,
+        request_body_sha256: request_body_sha256.clone(),
+        route_config_hash: state.route_config_hash.clone(),
+        policy_set_hash: state.policy_set_hash.clone(),
+    };
+
+    if persist_pre_forward_execution_intent(
+        &execution_intent,
+        state.audit_store.clone(),
+        state.metrics.clone(),
+        state.audit_persistence_mode,
+    )
+    .await
+    .is_err()
+    {
+        return response::audit_persistence_error_response(&execution_id);
+    }
+
     match forward::forward_request(
         &state.http_client,
         &route.upstream,
@@ -878,6 +986,17 @@ pub async fn handle_execute(
                 .await
                 .is_err()
                 {
+                    mark_pre_forward_execution_intent(
+                        &execution_id,
+                        ExecutionIntentStatus::FinalizationFailed,
+                        Some(
+                            "execution bundle persistence failed after upstream request completed",
+                        ),
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                        state.audit_persistence_mode,
+                    )
+                    .await;
                     return response::audit_persistence_error_response(&execution_id);
                 }
             } else {
@@ -890,9 +1009,29 @@ pub async fn handle_execute(
                 .await
                 .is_err()
                 {
+                    mark_pre_forward_execution_intent(
+                        &execution_id,
+                        ExecutionIntentStatus::FinalizationFailed,
+                        Some(
+                            "execution record persistence failed after upstream request completed",
+                        ),
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                        state.audit_persistence_mode,
+                    )
+                    .await;
                     return response::audit_persistence_error_response(&execution_id);
                 }
             }
+            mark_pre_forward_execution_intent(
+                &execution_id,
+                ExecutionIntentStatus::Finalized,
+                None,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await;
             result.response
         }
         Err(e) => {
@@ -953,8 +1092,28 @@ pub async fn handle_execute(
             .await
             .is_err()
             {
+                mark_pre_forward_execution_intent(
+                    &execution_id,
+                    ExecutionIntentStatus::FinalizationFailed,
+                    Some(
+                        "execution record persistence failed after upstream request was attempted",
+                    ),
+                    state.audit_store.clone(),
+                    state.metrics.clone(),
+                    state.audit_persistence_mode,
+                )
+                .await;
                 return response::audit_persistence_error_response(&execution_id);
             }
+            mark_pre_forward_execution_intent(
+                &execution_id,
+                ExecutionIntentStatus::Finalized,
+                None,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await;
             response::bad_gateway_response(&execution_id, &e)
         }
     }

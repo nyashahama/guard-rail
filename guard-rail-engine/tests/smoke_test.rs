@@ -1,6 +1,7 @@
 use axum::Router;
 use reqwest::Client;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -28,6 +29,33 @@ async fn start_mock_upstream(status: u16, body: &'static str, delay_ms: u64) -> 
     });
 
     format!("http://{}", addr)
+}
+
+async fn start_counting_upstream(status: u16, body: &'static str) -> (String, Arc<AtomicUsize>) {
+    let hit_count = Arc::new(AtomicUsize::new(0));
+    let app_hit_count = Arc::clone(&hit_count);
+    let app = Router::new().route(
+        "/{*path}",
+        axum::routing::any(move || {
+            let app_hit_count = Arc::clone(&app_hit_count);
+            async move {
+                app_hit_count.fetch_add(1, Ordering::SeqCst);
+                (
+                    axum::http::StatusCode::from_u16(status).unwrap(),
+                    body.to_string(),
+                )
+            }
+        }),
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{}", addr), hit_count)
 }
 
 fn write_file(dir: &std::path::Path, name: &str, content: &str) {
@@ -314,6 +342,72 @@ async fn test_best_effort_audit_persistence_preserves_response_when_store_unavai
     .await;
 
     assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn required_audit_mode_does_not_forward_without_pre_forward_intent() {
+    let (upstream, upstream_hits) = start_counting_upstream(200, r#"{"ok":true}"#).await;
+
+    let route = guard_rail_engine::routes::Route::new(
+        "open-route".to_string(),
+        guard_rail_engine::routes::RouteAuthMode::Public,
+        format!("{upstream}/api/open"),
+        vec!["POST".to_string()],
+        vec![],
+    );
+
+    let state = guard_rail_engine::proxy::AppState {
+        routes: Arc::new(RwLock::new(
+            guard_rail_engine::routes::RouteTable::from_routes(vec![route]),
+        )),
+        policies: Arc::new(RwLock::new(guard_rail_engine::policy::PolicySet::new())),
+        http_client: Client::new(),
+        audit_store: None,
+        audit_persistence_mode:
+            guard_rail_engine::config::AuditPersistenceMode::RequiredBeforeResponse,
+        metrics: Some(Arc::new(
+            guard_rail_engine::observability::metrics::Metrics::new().unwrap(),
+        )),
+        lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
+        readiness_probe_timeout_ms: 250,
+        trace_header_name: "traceparent".to_string(),
+        route_config_hash: guard_rail_engine::audit::hash::hash_string("routes"),
+        policy_set_hash: guard_rail_engine::audit::hash::hash_string("policies"),
+        admin_token: "stage5-admin-token".to_string(),
+        tenant_repo: guard_rail_engine::tenant::repository::TenantRepository::new(
+            sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy("postgres://localhost:5432")
+                .unwrap(),
+        ),
+        tenant_cache: guard_rail_engine::tenant::cache::TenantAuthCache::default(),
+        rate_limiter: guard_rail_engine::auth::rate_limit::TenantRateLimiter::new(120, 30),
+        replay: guard_rail_engine::config::ReplayConfig::default(),
+    };
+
+    let app = guard_rail_engine::proxy::build_main_router(
+        state,
+        1_048_576,
+        &guard_rail_engine::config::ObservabilityConfig::default(),
+    );
+
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/v1/execute/open-route")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(r#"{"data":"hello"}"#))
+        .unwrap();
+    request.extensions_mut().insert(axum::extract::ConnectInfo(
+        "127.0.0.1:3000".parse::<std::net::SocketAddr>().unwrap(),
+    ));
+
+    let response = app.oneshot(request).await.unwrap();
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(upstream_hits.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
