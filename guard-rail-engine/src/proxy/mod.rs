@@ -10,9 +10,11 @@ use crate::logging::ExecutionLog;
 use crate::observability::metrics::Metrics;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
+use crate::replay::redaction;
 use crate::replay::snapshot;
 use crate::routes::RouteTable;
 use crate::shutdown::LifecycleState;
+use crate::storage::postgres::{ExecutionIntentRecord, ExecutionIntentStatus};
 use crate::tenant::cache::TenantAuthCache;
 use crate::tenant::repository::TenantRepository;
 use axum::Json;
@@ -60,9 +62,6 @@ pub struct AppState {
     pub rate_limiter: crate::auth::rate_limit::TenantRateLimiter,
     pub replay: ReplayConfig,
 }
-
-unsafe impl Send for AppState {}
-unsafe impl Sync for AppState {}
 
 impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -176,6 +175,86 @@ async fn persist_execution_bundle(
     }
 }
 
+async fn persist_pre_forward_execution_intent(
+    intent: &ExecutionIntentRecord,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
+    mode: AuditPersistenceMode,
+) -> Result<(), ()> {
+    match (mode, audit_store) {
+        (AuditPersistenceMode::BestEffort, _) => Ok(()),
+        (AuditPersistenceMode::RequiredBeforeResponse, Some(store)) => {
+            if let Err(e) = store.insert_execution_intent(intent).await {
+                tracing::error!(
+                    error = %e,
+                    execution_id = %intent.execution_id,
+                    "failed to persist execution intent"
+                );
+                if let Some(metrics) = metrics {
+                    metrics.record_audit_persist_failure("insert_execution_intent");
+                }
+                Err(())
+            } else {
+                Ok(())
+            }
+        }
+        (AuditPersistenceMode::RequiredBeforeResponse, None) => {
+            tracing::error!(
+                execution_id = %intent.execution_id,
+                "audit persistence required but audit store is unavailable"
+            );
+            if let Some(metrics) = metrics {
+                metrics.record_audit_persist_failure("missing_audit_store");
+            }
+            Err(())
+        }
+    }
+}
+
+async fn mark_pre_forward_execution_intent(
+    execution_id: &str,
+    status: ExecutionIntentStatus,
+    finalization_error: Option<&str>,
+    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    metrics: Option<Arc<Metrics>>,
+    mode: AuditPersistenceMode,
+) {
+    if mode != AuditPersistenceMode::RequiredBeforeResponse {
+        return;
+    }
+
+    let Some(store) = audit_store else {
+        tracing::error!(
+            execution_id = execution_id,
+            "audit persistence required but audit store is unavailable during execution intent finalization"
+        );
+        if let Some(metrics) = metrics {
+            metrics.record_audit_persist_failure("missing_audit_store");
+        }
+        return;
+    };
+
+    let status_label = match status {
+        ExecutionIntentStatus::Finalized => "finalized",
+        ExecutionIntentStatus::FinalizationFailed => "finalization_failed",
+    };
+
+    if let Err(e) = store
+        .update_execution_intent_status(execution_id, status, finalization_error)
+        .await
+    {
+        tracing::error!(
+            error = %e,
+            execution_id = execution_id,
+            status = status_label,
+            "failed to update execution intent status"
+        );
+        if let Some(metrics) = metrics {
+            metrics.record_audit_persist_failure("update_execution_intent_status");
+        }
+    }
+}
+
 fn record_execution_metric(
     metrics: Option<&Arc<Metrics>>,
     route_id: &str,
@@ -185,6 +264,139 @@ fn record_execution_metric(
 ) {
     if let Some(metrics) = metrics {
         metrics.record_execution(route_id, method, verdict, latency_seconds);
+    }
+}
+
+fn redact_replay_request_body(
+    payload: &serde_json::Value,
+    replay: &ReplayConfig,
+) -> serde_json::Value {
+    let mut redacted_payload = payload.clone();
+    redaction::redact_json_fields(
+        &mut redacted_payload,
+        &replay.redact_json_fields,
+        &replay.redaction_text,
+    );
+    redacted_payload
+}
+
+fn redact_replay_headers(
+    headers: serde_json::Value,
+    fields: &[String],
+    redaction_text: &str,
+) -> serde_json::Value {
+    let mut redacted_headers = headers;
+    redaction::redact_headers(&mut redacted_headers, fields, redaction_text);
+    redacted_headers
+}
+
+fn redact_persisted_response_body(
+    response_body_bytes: &[u8],
+    replay: &ReplayConfig,
+) -> (String, Option<String>, bool) {
+    let response_body_str = String::from_utf8_lossy(response_body_bytes).to_string();
+    let persisted_body_candidate =
+        match serde_json::from_str::<serde_json::Value>(&response_body_str) {
+            Ok(mut json_body) => {
+                redaction::redact_json_fields(
+                    &mut json_body,
+                    &replay.redact_json_fields,
+                    &replay.redaction_text,
+                );
+                serde_json::to_string(&json_body).unwrap_or(response_body_str)
+            }
+            Err(_) => response_body_str,
+        };
+    let (persisted_body, truncated) =
+        truncate_utf8_to_max_bytes(persisted_body_candidate, replay.max_response_body_bytes);
+
+    let response_body_sha256 = Some(hash_string(&persisted_body));
+    (persisted_body, response_body_sha256, truncated)
+}
+
+fn truncate_utf8_to_max_bytes(input: String, max_bytes: usize) -> (String, bool) {
+    if input.len() <= max_bytes {
+        return (input, false);
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    (input[..end].to_string(), true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn app_state_is_send_sync_without_unsafe_impls() {
+        assert_send_sync::<AppState>();
+    }
+
+    #[test]
+    fn redact_persisted_response_body_redacts_json_and_hashes_persisted_body() {
+        let replay = ReplayConfig {
+            redact_json_fields: vec!["token".into(), "password".into()],
+            redaction_text: "[REDACTED]".into(),
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body(
+            br#"{"email":"ops@example.com","token":"abc123","nested":{"password":"plaintext"}}"#,
+            &replay,
+        );
+
+        assert!(!truncated);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({
+                "email": "ops@example.com",
+                "token": "[REDACTED]",
+                "nested": { "password": "[REDACTED]" }
+            })
+        );
+        assert_eq!(sha, Some(hash_string(&body)));
+    }
+
+    #[test]
+    fn redact_persisted_response_body_truncates_multibyte_utf8_safely() {
+        let replay = ReplayConfig {
+            max_response_body_bytes: 5,
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body("😀😀".as_bytes(), &replay);
+
+        assert!(truncated);
+        assert_eq!(body, "😀");
+        assert!(body.len() <= replay.max_response_body_bytes);
+        assert_eq!(sha, Some(hash_string(&body)));
+    }
+
+    #[test]
+    fn redact_persisted_response_body_redacts_oversized_json_before_truncation() {
+        let replay = ReplayConfig {
+            max_response_body_bytes: 60,
+            redact_json_fields: vec!["api_key".into()],
+            redaction_text: "[REDACTED]".into(),
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body(
+            br#"{"api_key":"abc123","zz_padding":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"}"#,
+            &replay,
+        );
+
+        assert!(truncated);
+        assert!(!body.contains("abc123"));
+        assert!(body.contains("[REDACTED]"));
+        assert!(body.len() <= replay.max_response_body_bytes);
+        assert_eq!(sha, Some(hash_string(&body)));
     }
 }
 
@@ -677,14 +889,20 @@ pub async fn handle_execute(
             if state.replay.enabled {
                 let capture_request_headers =
                     snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+                let redacted_request_body = redact_replay_request_body(&payload, &state.replay);
+                let redacted_request_headers = redact_replay_headers(
+                    capture_request_headers,
+                    &state.replay.redact_request_headers,
+                    &state.replay.redaction_text,
+                );
                 let policies = state.policies.read().await;
                 let snapshot = snapshot::build_snapshot_from_set(&route, &policies)
                     .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
                 drop(policies);
                 let artifacts = ReplayArtifacts {
                     snapshot_hash: snapshot.snapshot_hash.clone(),
-                    request_body_json: payload.clone(),
-                    request_headers: capture_request_headers,
+                    request_body_json: redacted_request_body,
+                    request_headers: redacted_request_headers,
                     response_status: None,
                     response_headers: None,
                     response_body: None,
@@ -769,14 +987,46 @@ pub async fn handle_execute(
     let (snapshot, request_headers_for_artifact) = if state.replay.enabled {
         let capture_request_headers =
             snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+        let redacted_request_headers = redact_replay_headers(
+            capture_request_headers,
+            &state.replay.redact_request_headers,
+            &state.replay.redaction_text,
+        );
         let policies = state.policies.read().await;
         let sp = snapshot::build_snapshot_from_set(&route, &policies)
             .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
         drop(policies);
-        (Some(sp), Some(capture_request_headers))
+        (Some(sp), Some(redacted_request_headers))
     } else {
         (None, None)
     };
+
+    let execution_intent = ExecutionIntentRecord {
+        execution_id: execution_id.clone(),
+        route_id: route_id.clone(),
+        tenant_id,
+        api_key_id,
+        method: method_str.clone(),
+        source_ip: source_ip.clone(),
+        content_type: content_type.clone(),
+        user_agent: user_agent.clone(),
+        request_size_bytes,
+        request_body_sha256: request_body_sha256.clone(),
+        route_config_hash: state.route_config_hash.clone(),
+        policy_set_hash: state.policy_set_hash.clone(),
+    };
+
+    if persist_pre_forward_execution_intent(
+        &execution_intent,
+        state.audit_store.clone(),
+        state.metrics.clone(),
+        state.audit_persistence_mode,
+    )
+    .await
+    .is_err()
+    {
+        return response::audit_persistence_error_response(&execution_id);
+    }
 
     match forward::forward_request(
         &state.http_client,
@@ -839,30 +1089,26 @@ pub async fn handle_execute(
             tracing::Span::current().record("verdict", "ALLOWED");
 
             if state.replay.enabled {
-                let response_body_bytes = result.body_bytes;
-                let response_body_str = String::from_utf8_lossy(&response_body_bytes).to_string();
-                let max_len = state.replay.max_response_body_bytes;
+                let redacted_request_body = redact_replay_request_body(&payload, &state.replay);
                 let (response_body, response_body_sha256, truncated) =
-                    if response_body_str.len() > max_len {
-                        let truncated_body = response_body_str[..max_len].to_string();
-                        let sha = Some(hash_string(&truncated_body));
-                        (truncated_body, sha, true)
-                    } else {
-                        let sha = Some(hash_string(&response_body_str));
-                        (response_body_str.clone(), sha, false)
-                    };
+                    redact_persisted_response_body(&result.body_bytes, &state.replay);
 
                 let response_headers = snapshot::filter_headers(
                     result.response.headers(),
                     &state.replay.capture_response_headers,
                 );
+                let redacted_response_headers = redact_replay_headers(
+                    response_headers,
+                    &state.replay.redact_response_headers,
+                    &state.replay.redaction_text,
+                );
 
                 let artifacts = ReplayArtifacts {
                     snapshot_hash: snapshot.as_ref().unwrap().snapshot_hash.clone(),
-                    request_body_json: payload.clone(),
+                    request_body_json: redacted_request_body,
                     request_headers: request_headers_for_artifact.unwrap(),
                     response_status: Some(result.status),
-                    response_headers: Some(response_headers),
+                    response_headers: Some(redacted_response_headers),
                     response_body: Some(response_body),
                     response_body_sha256,
                     response_body_truncated: truncated,
@@ -878,6 +1124,17 @@ pub async fn handle_execute(
                 .await
                 .is_err()
                 {
+                    mark_pre_forward_execution_intent(
+                        &execution_id,
+                        ExecutionIntentStatus::FinalizationFailed,
+                        Some(
+                            "execution bundle persistence failed after upstream request completed",
+                        ),
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                        state.audit_persistence_mode,
+                    )
+                    .await;
                     return response::audit_persistence_error_response(&execution_id);
                 }
             } else {
@@ -890,9 +1147,29 @@ pub async fn handle_execute(
                 .await
                 .is_err()
                 {
+                    mark_pre_forward_execution_intent(
+                        &execution_id,
+                        ExecutionIntentStatus::FinalizationFailed,
+                        Some(
+                            "execution record persistence failed after upstream request completed",
+                        ),
+                        state.audit_store.clone(),
+                        state.metrics.clone(),
+                        state.audit_persistence_mode,
+                    )
+                    .await;
                     return response::audit_persistence_error_response(&execution_id);
                 }
             }
+            mark_pre_forward_execution_intent(
+                &execution_id,
+                ExecutionIntentStatus::Finalized,
+                None,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await;
             result.response
         }
         Err(e) => {
@@ -953,8 +1230,28 @@ pub async fn handle_execute(
             .await
             .is_err()
             {
+                mark_pre_forward_execution_intent(
+                    &execution_id,
+                    ExecutionIntentStatus::FinalizationFailed,
+                    Some(
+                        "execution record persistence failed after upstream request was attempted",
+                    ),
+                    state.audit_store.clone(),
+                    state.metrics.clone(),
+                    state.audit_persistence_mode,
+                )
+                .await;
                 return response::audit_persistence_error_response(&execution_id);
             }
+            mark_pre_forward_execution_intent(
+                &execution_id,
+                ExecutionIntentStatus::Finalized,
+                None,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await;
             response::bad_gateway_response(&execution_id, &e)
         }
     }

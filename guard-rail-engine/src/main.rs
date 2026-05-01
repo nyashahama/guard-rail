@@ -19,7 +19,7 @@ use audit::hash::hash_string;
 use clap::Parser;
 use proxy::AppState;
 use reqwest::Client;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tenant::cache::{TenantAuthCache, validate_route_auth_state};
@@ -49,23 +49,103 @@ struct Cli {
 }
 
 fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
-    let requires_strong_admin_token =
-        matches!(config.environment, config::RuntimeEnvironment::Production)
-            && config.admin_server.is_some();
-
-    if !requires_strong_admin_token {
+    if !matches!(config.environment, config::RuntimeEnvironment::Production) {
         return Ok(());
     }
 
-    let token = config.admin.token.trim();
-    if token.is_empty() || token.eq_ignore_ascii_case("change-me") {
+    if config.database.url.trim().is_empty() {
         return Err(
-            "invalid admin token for production admin listener; configure a non-default token"
+            "invalid database URL for production runtime; database.url cannot be empty".to_string(),
+        );
+    }
+
+    if config.audit.persistence_mode != config::AuditPersistenceMode::RequiredBeforeResponse {
+        return Err(
+            "invalid audit.persistence_mode for production runtime; expected required_before_response"
                 .to_string(),
         );
     }
 
+    if config.audit.write_timeout_ms == 0 {
+        return Err(
+            "invalid audit.write_timeout_ms for production runtime; value must be greater than 0"
+                .to_string(),
+        );
+    }
+
+    if config.server.request_body_limit_bytes == 0 {
+        return Err(
+            "invalid server.request_body_limit_bytes for production runtime; value must be greater than 0"
+                .to_string(),
+        );
+    }
+
+    if config.replay.enabled {
+        if config.replay.max_response_body_bytes == 0 {
+            return Err(
+                "invalid replay.max_response_body_bytes for production runtime; value must be greater than 0"
+                    .to_string(),
+            );
+        }
+
+        if !has_only_non_blank_entries(&config.replay.redact_request_headers)
+            || !has_only_non_blank_entries(&config.replay.redact_response_headers)
+            || !has_only_non_blank_entries(&config.replay.redact_json_fields)
+            || config.replay.redaction_text.trim().is_empty()
+        {
+            return Err(
+                "invalid replay redaction policy for production runtime; redact_request_headers, redact_response_headers, redact_json_fields, and redaction_text must all be configured"
+                    .to_string(),
+            );
+        }
+    }
+
+    if let Some(admin_server) = &config.admin_server {
+        let token = config.admin.token.trim();
+        if token.is_empty() || token.eq_ignore_ascii_case("change-me") {
+            return Err(
+                "invalid admin token for production admin listener; configure a non-default token"
+                    .to_string(),
+            );
+        }
+
+        let admin_host = normalize_literal_ip_host(admin_server.host.trim());
+        if let Ok(ip_addr) = admin_host.parse::<IpAddr>()
+            && ip_addr.is_unspecified()
+        {
+            return Err(
+                "invalid admin listener for production runtime; admin listener cannot bind to an unspecified address"
+                    .to_string(),
+            );
+        }
+    }
+
     Ok(())
+}
+
+fn has_only_non_blank_entries(values: &[String]) -> bool {
+    !values.is_empty()
+        && values
+            .iter()
+            .all(|value| !value.trim().is_empty() && value.trim() == value)
+}
+
+fn normalize_literal_ip_host(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
+fn format_bind_address(host: &str, port: u16) -> String {
+    let normalized_host = normalize_literal_ip_host(host.trim());
+    match normalized_host.parse::<IpAddr>() {
+        Ok(IpAddr::V6(_)) => format!("[{}]:{}", normalized_host, port),
+        _ => format!("{}:{}", host.trim(), port),
+    }
+}
+
+fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
+    std::time::Duration::from_millis(config.audit.write_timeout_ms)
 }
 
 #[tokio::main]
@@ -171,7 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let audit_store = storage::postgres::PostgresAuditStore::new(
         pool.clone(),
-        std::time::Duration::from_millis(250),
+        configured_audit_write_timeout(&app_config),
     );
     let lifecycle = shutdown::LifecycleState::new();
 
@@ -233,7 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_app = proxy::build_admin_router(state.clone(), app_config.admin.token.clone());
 
     let main_addr: SocketAddr =
-        format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
+        format_bind_address(&app_config.server.host, app_config.server.port).parse()?;
 
     tracing::info!("Guard Rail Engine starting main listener on {}", main_addr);
 
@@ -241,7 +321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let admin_handle = if let Some(admin_config) = &app_config.admin_server {
         let admin_addr: SocketAddr =
-            format!("{}:{}", admin_config.host, admin_config.port).parse()?;
+            format_bind_address(&admin_config.host, admin_config.port).parse()?;
         tracing::info!(
             "Guard Rail Engine starting admin listener on {}",
             admin_addr
@@ -324,19 +404,52 @@ mod tests {
     use clap::Parser;
     use std::io::Write;
 
-    fn test_config(
-        environment: &str,
-        include_admin_server: bool,
-        admin_token: &str,
-    ) -> config::AppConfig {
-        let admin_server = if include_admin_server {
+    struct TestConfigOptions<'a> {
+        environment: &'a str,
+        admin_server_host: Option<&'a str>,
+        admin_token: &'a str,
+        database_url: &'a str,
+        audit_persistence_mode: &'a str,
+        audit_write_timeout_ms: u64,
+        request_body_limit_bytes: usize,
+        replay_enabled: bool,
+        redact_request_headers: &'a str,
+        redact_response_headers: &'a str,
+        redact_json_fields: &'a str,
+        redaction_text: &'a str,
+        max_response_body_bytes: usize,
+    }
+
+    impl Default for TestConfigOptions<'_> {
+        fn default() -> Self {
+            Self {
+                environment: "production",
+                admin_server_host: Some("127.0.0.1"),
+                admin_token: "super-secret-token",
+                database_url: "postgres://user:pass@localhost/db",
+                audit_persistence_mode: "required_before_response",
+                audit_write_timeout_ms: 250,
+                request_body_limit_bytes: 1_048_576,
+                replay_enabled: true,
+                redact_request_headers: r#"["authorization"]"#,
+                redact_response_headers: r#"["set-cookie"]"#,
+                redact_json_fields: r#"["token"]"#,
+                redaction_text: "[REDACTED]",
+                max_response_body_bytes: 65_536,
+            }
+        }
+    }
+
+    fn test_config(options: TestConfigOptions<'_>) -> config::AppConfig {
+        let admin_server = if let Some(host) = options.admin_server_host {
             r#"
 admin_server:
-  host: "127.0.0.1"
+  host: "{host}"
   port: 8081
 "#
+            .replace("{host}", host)
         } else {
-            ""
+            String::new()
         };
 
         let yaml = format!(
@@ -345,18 +458,43 @@ environment: {environment}
 server:
   host: "127.0.0.1"
   port: 8080
+  request_body_limit_bytes: {request_body_limit_bytes}
 routes_file: "./config/routes.yaml"
 policies_dir: "./config/policies"
 forwarding: {{}}
 logging: {{}}
 database:
-  url: "postgres://user:pass@localhost/db"
-audit: {{}}
+  url: "{database_url}"
+audit:
+  write_timeout_ms: {audit_write_timeout_ms}
+  persistence_mode: {audit_persistence_mode}
 admin:
   token: "{admin_token}"
 {admin_server}
 rate_limit: {{}}
-"#
+replay:
+  enabled: {replay_enabled}
+  capture_request_headers: ["content-type"]
+  capture_response_headers: ["content-type"]
+  redact_request_headers: {redact_request_headers}
+  redact_response_headers: {redact_response_headers}
+  redact_json_fields: {redact_json_fields}
+  redaction_text: "{redaction_text}"
+  max_response_body_bytes: {max_response_body_bytes}
+"#,
+            environment = options.environment,
+            request_body_limit_bytes = options.request_body_limit_bytes,
+            database_url = options.database_url,
+            audit_write_timeout_ms = options.audit_write_timeout_ms,
+            audit_persistence_mode = options.audit_persistence_mode,
+            admin_token = options.admin_token,
+            admin_server = admin_server,
+            replay_enabled = options.replay_enabled,
+            redact_request_headers = options.redact_request_headers,
+            redact_response_headers = options.redact_response_headers,
+            redact_json_fields = options.redact_json_fields,
+            redaction_text = options.redaction_text,
+            max_response_body_bytes = options.max_response_body_bytes,
         );
 
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
@@ -386,22 +524,261 @@ rate_limit: {{}}
     }
 
     #[test]
-    fn test_production_admin_listener_rejects_default_token() {
-        let cfg = test_config("production", true, "change-me");
+    fn test_validate_startup_security_production_admin_listener_rejects_default_token() {
+        let cfg = test_config(TestConfigOptions {
+            admin_token: "change-me",
+            ..Default::default()
+        });
         let err = validate_startup_security(&cfg).unwrap_err();
         assert!(err.contains("invalid admin token"));
     }
 
     #[test]
-    fn test_production_admin_listener_rejects_empty_token() {
-        let cfg = test_config("production", true, "   ");
+    fn test_validate_startup_security_production_admin_listener_rejects_empty_token() {
+        let cfg = test_config(TestConfigOptions {
+            admin_token: "   ",
+            ..Default::default()
+        });
         let err = validate_startup_security(&cfg).unwrap_err();
         assert!(err.contains("invalid admin token"));
     }
 
     #[test]
-    fn test_development_allows_default_token() {
-        let cfg = test_config("development", true, "change-me");
+    fn test_validate_startup_security_development_allows_default_token() {
+        let cfg = test_config(TestConfigOptions {
+            environment: "development",
+            admin_token: "change-me",
+            ..Default::default()
+        });
+        assert!(validate_startup_security(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_blank_database_url() {
+        let cfg = test_config(TestConfigOptions {
+            database_url: "   ",
+            ..Default::default()
+        });
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("database URL"));
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_non_durable_audit_mode() {
+        let cfg = test_config(TestConfigOptions {
+            audit_persistence_mode: "best_effort",
+            ..Default::default()
+        });
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("audit.persistence_mode"));
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_zero_audit_write_timeout() {
+        let cfg = test_config(TestConfigOptions {
+            audit_write_timeout_ms: 0,
+            ..Default::default()
+        });
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("audit.write_timeout_ms"));
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_zero_request_body_limit() {
+        let cfg = test_config(TestConfigOptions {
+            request_body_limit_bytes: 0,
+            ..Default::default()
+        });
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("server.request_body_limit_bytes"));
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_zero_replay_response_body_limit_when_enabled()
+     {
+        let cfg = test_config(TestConfigOptions {
+            max_response_body_bytes: 0,
+            ..Default::default()
+        });
+        let err = validate_startup_security(&cfg).unwrap_err();
+        assert!(err.contains("replay.max_response_body_bytes"));
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_empty_replay_redaction_policy_when_enabled()
+     {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: "[]",
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: "[]",
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: "[]",
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redaction_text: "   ",
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_whitespace_only_replay_redaction_entries()
+    {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"["   "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"["\t"]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["  "]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_mixed_blank_replay_redaction_entries() {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"["authorization", "   "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"["set-cookie", " "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["token", "\t"]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_padded_replay_redaction_entries() {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"[" authorization "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"[" set-cookie"]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["token "]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_configured_audit_write_timeout_uses_configured_value() {
+        let cfg = test_config(TestConfigOptions {
+            audit_write_timeout_ms: 987,
+            ..Default::default()
+        });
+
+        assert_eq!(
+            configured_audit_write_timeout(&cfg),
+            std::time::Duration::from_millis(987)
+        );
+    }
+
+    #[test]
+    fn test_format_bind_address_brackets_ipv6_literals() {
+        assert_eq!(format_bind_address("::1", 8081), "[::1]:8081");
+        assert_eq!(format_bind_address("[::1]", 8081), "[::1]:8081");
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_wildcard_admin_listener_hosts() {
+        for host in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "[::]"] {
+            let cfg = test_config(TestConfigOptions {
+                admin_server_host: Some(host),
+                ..Default::default()
+            });
+            let err = validate_startup_security(&cfg).unwrap_err();
+            assert!(err.contains("admin listener"));
+        }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_allows_loopback_ipv6_admin_listener() {
+        let cfg = test_config(TestConfigOptions {
+            admin_server_host: Some("::1"),
+            ..Default::default()
+        });
+
+        assert!(validate_startup_security(&cfg).is_ok());
+        assert_eq!(
+            format_bind_address(&cfg.admin_server.unwrap().host, 8081),
+            "[::1]:8081"
+        );
+    }
+
+    #[test]
+    fn test_validate_startup_security_development_allows_unsafe_local_defaults() {
+        let cfg = test_config(TestConfigOptions {
+            environment: "development",
+            admin_server_host: Some("0.0.0.0"),
+            admin_token: "change-me",
+            database_url: "",
+            audit_persistence_mode: "best_effort",
+            audit_write_timeout_ms: 0,
+            request_body_limit_bytes: 0,
+            redact_request_headers: "[]",
+            redact_response_headers: "[]",
+            redact_json_fields: "[]",
+            redaction_text: "",
+            max_response_body_bytes: 0,
+            ..Default::default()
+        });
+        assert!(validate_startup_security(&cfg).is_ok());
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_allows_disabled_replay_without_redaction_requirements()
+     {
+        let cfg = test_config(TestConfigOptions {
+            replay_enabled: false,
+            redact_request_headers: "[]",
+            redact_response_headers: "[]",
+            redact_json_fields: "[]",
+            redaction_text: "",
+            max_response_body_bytes: 0,
+            ..Default::default()
+        });
         assert!(validate_startup_security(&cfg).is_ok());
     }
 

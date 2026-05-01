@@ -2,6 +2,37 @@ use sqlx::{PgPool, QueryBuilder, Row};
 
 pub use sqlx::postgres::PgPoolOptions;
 
+#[derive(Debug, Clone)]
+pub struct ExecutionIntentRecord {
+    pub execution_id: String,
+    pub route_id: String,
+    pub tenant_id: Option<uuid::Uuid>,
+    pub api_key_id: Option<uuid::Uuid>,
+    pub method: String,
+    pub source_ip: String,
+    pub content_type: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_size_bytes: usize,
+    pub request_body_sha256: String,
+    pub route_config_hash: String,
+    pub policy_set_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionIntentStatus {
+    Finalized,
+    FinalizationFailed,
+}
+
+impl ExecutionIntentStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Finalized => "finalized",
+            Self::FinalizationFailed => "finalization_failed",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum IntegrityCheckError {
     #[allow(dead_code)]
@@ -27,20 +58,192 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 }
 
 pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query_scalar::<_, i64>(
-        "select count(*) from information_schema.tables where table_name = 'execution_audit'",
+    let audit_table_count = sqlx::query_scalar::<_, i64>(
+        "select count(*) from information_schema.tables where table_schema = 'public' and table_name = 'execution_audit'",
     )
     .fetch_one(pool)
-    .await
-    .and_then(|count| {
-        if count == 1 {
-            Ok(())
-        } else {
-            Err(sqlx::Error::Protocol(
-                "execution_audit table missing".into(),
-            ))
-        }
-    })
+    .await?;
+
+    if audit_table_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "required audit tables missing".into(),
+        ));
+    }
+
+    let intent_column_signature_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        with expected(column_name, data_type, is_nullable) as (
+            values
+                ('execution_id', 'text', 'NO'),
+                ('route_id', 'text', 'NO'),
+                ('tenant_id', 'uuid', 'YES'),
+                ('api_key_id', 'uuid', 'YES'),
+                ('method', 'text', 'NO'),
+                ('source_ip', 'text', 'NO'),
+                ('content_type', 'text', 'YES'),
+                ('user_agent', 'text', 'YES'),
+                ('request_size_bytes', 'bigint', 'NO'),
+                ('request_body_sha256', 'text', 'NO'),
+                ('route_config_hash', 'text', 'NO'),
+                ('policy_set_hash', 'text', 'NO'),
+                ('status', 'text', 'NO'),
+                ('finalization_error', 'text', 'YES'),
+                ('created_at', 'timestamp with time zone', 'NO'),
+                ('updated_at', 'timestamp with time zone', 'NO'),
+                ('finalized_at', 'timestamp with time zone', 'YES')
+        )
+        select count(*)
+        from expected
+        join information_schema.columns columns
+          on columns.table_schema = 'public'
+         and columns.table_name = 'execution_intents'
+         and columns.column_name = expected.column_name
+         and columns.data_type = expected.data_type
+         and columns.is_nullable = expected.is_nullable
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if intent_column_signature_count != 17 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema does not match required column definitions".into(),
+        ));
+    }
+
+    let tenant_foreign_key_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        join pg_class target_ref on target_ref.oid = constraints.confrelid
+        join pg_namespace target_ns on target_ns.oid = target_ref.relnamespace
+        where constraints.contype = 'f'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and target_ns.nspname = 'public'
+          and target_ref.relname = 'tenants'
+          and constraints.conkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = table_ref.oid
+                      and attname = 'tenant_id'
+                      and not attisdropped
+                )
+          ]
+          and constraints.confkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = target_ref.oid
+                      and attname = 'id'
+                      and not attisdropped
+                )
+          ]
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if tenant_foreign_key_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing tenant foreign key".into(),
+        ));
+    }
+
+    let api_key_foreign_key_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        join pg_class target_ref on target_ref.oid = constraints.confrelid
+        join pg_namespace target_ns on target_ns.oid = target_ref.relnamespace
+        where constraints.contype = 'f'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and target_ns.nspname = 'public'
+          and target_ref.relname = 'api_keys'
+          and constraints.conkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = table_ref.oid
+                      and attname = 'api_key_id'
+                      and not attisdropped
+                )
+          ]
+          and constraints.confkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = target_ref.oid
+                      and attname = 'id'
+                      and not attisdropped
+                )
+          ]
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if api_key_foreign_key_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing api key foreign key".into(),
+        ));
+    }
+
+    let request_size_check_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        where constraints.contype = 'c'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and regexp_replace(pg_get_expr(constraints.conbin, constraints.conrelid), '\s+', ' ', 'g')
+              = '(request_size_bytes >= 0)'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if request_size_check_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing request size invariant".into(),
+        ));
+    }
+
+    let terminal_state_check_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        where constraints.contype = 'c'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and replace(
+                regexp_replace(pg_get_expr(constraints.conbin, constraints.conrelid), '\s+', ' ', 'g'),
+                '::text',
+                ''
+              )
+              = '(((status = ''pending'') AND (finalization_error IS NULL) AND (finalized_at IS NULL)) OR ((status = ''finalized'') AND (finalization_error IS NULL) AND (finalized_at IS NOT NULL)) OR ((status = ''finalization_failed'') AND (finalization_error IS NOT NULL) AND (finalized_at IS NULL)))'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if terminal_state_check_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing terminal state invariant".into(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -76,6 +279,117 @@ impl PostgresAuditStore {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(sqlx::Error::Protocol("audit insert timed out".into())),
+        }
+    }
+
+    pub async fn insert_execution_intent(
+        &self,
+        intent: &ExecutionIntentRecord,
+    ) -> Result<(), sqlx::Error> {
+        let request_size_bytes = i64::try_from(intent.request_size_bytes).map_err(|_| {
+            sqlx::Error::Protocol("execution intent request size exceeds bigint".into())
+        })?;
+        let result = tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                insert into execution_intents (
+                    execution_id, route_id, tenant_id, api_key_id, method, source_ip,
+                    content_type, user_agent, request_size_bytes, request_body_sha256,
+                    route_config_hash, policy_set_hash, status
+                ) values (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10,
+                    $11, $12, 'pending'
+                )
+                "#,
+            )
+            .bind(&intent.execution_id)
+            .bind(&intent.route_id)
+            .bind(intent.tenant_id)
+            .bind(intent.api_key_id)
+            .bind(&intent.method)
+            .bind(&intent.source_ip)
+            .bind(&intent.content_type)
+            .bind(&intent.user_agent)
+            .bind(request_size_bytes)
+            .bind(&intent.request_body_sha256)
+            .bind(&intent.route_config_hash)
+            .bind(&intent.policy_set_hash)
+            .execute(&self.pool),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(sqlx::Error::Protocol(
+                "execution intent insert timed out".into(),
+            )),
+        }
+    }
+
+    pub async fn update_execution_intent_status(
+        &self,
+        execution_id: &str,
+        status: ExecutionIntentStatus,
+        finalization_error: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        let status_value = status.as_str();
+        let (finalization_error, finalized_at) = match status {
+            ExecutionIntentStatus::Finalized => {
+                if finalization_error.is_some() {
+                    return Err(sqlx::Error::Protocol(
+                        "finalized execution intents cannot include a finalization error".into(),
+                    ));
+                }
+                (None, Some(chrono::Utc::now()))
+            }
+            ExecutionIntentStatus::FinalizationFailed => {
+                let Some(finalization_error) = finalization_error else {
+                    return Err(sqlx::Error::Protocol(
+                        "finalization_failed execution intents require a finalization error".into(),
+                    ));
+                };
+                (Some(finalization_error), None)
+            }
+        };
+
+        let result = tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                update execution_intents
+                set status = $2,
+                    finalization_error = $3,
+                    finalized_at = $4,
+                    updated_at = now()
+                where execution_id = $1
+                  and status = 'pending'
+                "#,
+            )
+            .bind(execution_id)
+            .bind(status_value)
+            .bind(finalization_error)
+            .bind(finalized_at)
+            .execute(&self.pool),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(query_result)) => {
+                if query_result.rows_affected() == 1 {
+                    Ok(())
+                } else {
+                    Err(sqlx::Error::Protocol(
+                        "execution intent status update affected no pending rows".into(),
+                    ))
+                }
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(sqlx::Error::Protocol(
+                "execution intent status update timed out".into(),
+            )),
         }
     }
 

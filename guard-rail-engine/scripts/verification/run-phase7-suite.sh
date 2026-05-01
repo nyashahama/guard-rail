@@ -5,7 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
 
+ENGINE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${ENGINE_DIR}/.." && pwd)"
 export PHASE7_SUITE_ID="${PHASE7_SUITE_ID:-$(phase7_timestamp)}"
+export PHASE7_RESULT_ROOT="${PHASE7_RESULT_ROOT:-${REPO_ROOT}/tmp/verification}"
 
 scripts=(
   "load-allowed-and-blocked.sh"
@@ -13,6 +16,8 @@ scripts=(
   "drain-under-load.sh"
   "db-degradation.sh"
   "upstream-degradation.sh"
+  "hard-audit-mode.sh"
+  "replay-redaction.sh"
   "dependency-audits.sh"
 )
 

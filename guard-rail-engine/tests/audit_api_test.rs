@@ -1,5 +1,7 @@
 use guard_rail_engine::execution::{ExecutionRecord, ExecutionVerdict};
-use guard_rail_engine::storage::postgres::PostgresAuditStore;
+use guard_rail_engine::storage::postgres::{
+    ExecutionIntentRecord, ExecutionIntentStatus, PostgresAuditStore,
+};
 use std::sync::{Arc, OnceLock};
 use tower::util::ServiceExt;
 
@@ -33,6 +35,7 @@ async fn reset_test_database(pool: &sqlx::PgPool) {
             replay_runs,
             execution_artifacts,
             policy_snapshots,
+            execution_intents,
             execution_audit,
             tenant_routes,
             api_keys,
@@ -428,6 +431,117 @@ async fn test_insert_execution_and_fetch_it_back() {
 }
 
 #[tokio::test]
+async fn execution_intent_can_be_inserted_and_finalized() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    reset_test_database(&pool).await;
+
+    let store = PostgresAuditStore::new(pool.clone(), std::time::Duration::from_millis(250));
+    let repo = guard_rail_engine::tenant::repository::TenantRepository::new(pool.clone());
+    let tenant = repo.create_tenant("intent-tenant").await.unwrap();
+    let api_key = repo.create_api_key(tenant.id, "intent-key").await.unwrap();
+    let intent = ExecutionIntentRecord {
+        execution_id: "GR-INTENT-1".to_string(),
+        route_id: "test-route".to_string(),
+        tenant_id: Some(tenant.id),
+        api_key_id: Some(api_key.id),
+        method: "POST".to_string(),
+        source_ip: "127.0.0.1".to_string(),
+        content_type: Some("application/json".to_string()),
+        user_agent: Some("integration-test".to_string()),
+        request_size_bytes: 32,
+        request_body_sha256: guard_rail_engine::audit::hash::hash_body(br#"{"ok":true}"#),
+        route_config_hash: "route-hash".to_string(),
+        policy_set_hash: "policy-hash".to_string(),
+    };
+
+    store.insert_execution_intent(&intent).await.unwrap();
+    store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::Finalized,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let status: String =
+        sqlx::query_scalar("select status from execution_intents where execution_id = $1")
+            .bind(&intent.execution_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(status, "finalized");
+
+    let failed_intent = ExecutionIntentRecord {
+        execution_id: "GR-INTENT-2".to_string(),
+        ..intent.clone()
+    };
+
+    store.insert_execution_intent(&failed_intent).await.unwrap();
+    store
+        .update_execution_intent_status(
+            &failed_intent.execution_id,
+            ExecutionIntentStatus::FinalizationFailed,
+            Some("late persistence failure"),
+        )
+        .await
+        .unwrap();
+
+    let failed_row: (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as(
+            "select status, finalization_error, finalized_at from execution_intents where execution_id = $1",
+        )
+        .bind(&failed_intent.execution_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(failed_row.0, "finalization_failed");
+    assert_eq!(failed_row.1.as_deref(), Some("late persistence failure"));
+    assert!(failed_row.2.is_none());
+
+    let update_after_finalize = store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::FinalizationFailed,
+            Some("late failure"),
+        )
+        .await;
+    assert!(update_after_finalize.is_err());
+
+    let missing_update = store
+        .update_execution_intent_status("GR-INTENT-MISSING", ExecutionIntentStatus::Finalized, None)
+        .await;
+    assert!(missing_update.is_err());
+
+    let finalized_with_error = store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::Finalized,
+            Some("should not be allowed"),
+        )
+        .await;
+    assert!(finalized_with_error.is_err());
+
+    let failed_without_error = store
+        .update_execution_intent_status(
+            &intent.execution_id,
+            ExecutionIntentStatus::FinalizationFailed,
+            None,
+        )
+        .await;
+    assert!(failed_without_error.is_err());
+}
+
+#[tokio::test]
 async fn test_stage3_migration_creates_tenant_tables() {
     let _db_guard = TestDatabaseGuard::acquire().await;
     let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
@@ -453,6 +567,71 @@ async fn test_stage3_migration_creates_tenant_tables() {
     .unwrap();
 
     assert_eq!(tables, vec!["api_keys", "tenant_routes", "tenants"]);
+}
+
+#[tokio::test]
+async fn schema_ready_requires_execution_intents_schema() {
+    let _db_guard = TestDatabaseGuard::acquire().await;
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    reset_test_database(&pool).await;
+
+    sqlx::query("alter table execution_intents rename to execution_intents_backup")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"
+        create table execution_intents (
+            execution_id text primary key,
+            route_id text not null,
+            tenant_id uuid,
+            api_key_id uuid,
+            method text not null,
+            source_ip text not null,
+            content_type text,
+            user_agent text,
+            request_size_bytes bigint not null,
+            request_body_sha256 text not null,
+            route_config_hash text not null,
+            policy_set_hash text not null,
+            status text not null,
+            finalization_error text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
+            finalized_at timestamptz
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let check_result = guard_rail_engine::storage::postgres::assert_schema_ready(&pool).await;
+
+    sqlx::query("drop table execution_intents")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("alter table execution_intents_backup rename to execution_intents")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let err = check_result.unwrap_err();
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("execution_intents schema missing tenant foreign key")
+            || err_text.contains("execution_intents schema missing api key foreign key")
+            || err_text.contains("execution_intents schema missing request size invariant")
+            || err_text.contains("execution_intents schema missing terminal state invariant")
+    );
 }
 
 #[tokio::test]

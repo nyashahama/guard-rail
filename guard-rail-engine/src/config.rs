@@ -162,7 +162,7 @@ fn default_burst() -> u32 {
     30
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ReplayConfig {
     #[serde(default = "default_replay_enabled")]
     pub enabled: bool,
@@ -170,6 +170,14 @@ pub struct ReplayConfig {
     pub capture_request_headers: Vec<String>,
     #[serde(default = "default_capture_response_headers")]
     pub capture_response_headers: Vec<String>,
+    #[serde(default = "default_redact_request_headers")]
+    pub redact_request_headers: Vec<String>,
+    #[serde(default = "default_redact_response_headers")]
+    pub redact_response_headers: Vec<String>,
+    #[serde(default = "default_redact_json_fields")]
+    pub redact_json_fields: Vec<String>,
+    #[serde(default = "default_redaction_text")]
+    pub redaction_text: String,
     #[serde(default = "default_max_response_body_bytes")]
     pub max_response_body_bytes: usize,
 }
@@ -190,8 +198,48 @@ fn default_capture_response_headers() -> Vec<String> {
     vec!["content-type".into(), "x-upstream-version".into()]
 }
 
+fn default_redact_request_headers() -> Vec<String> {
+    vec!["authorization".into(), "cookie".into(), "x-api-key".into()]
+}
+
+fn default_redact_response_headers() -> Vec<String> {
+    vec!["set-cookie".into(), "x-api-key".into()]
+}
+
+fn default_redact_json_fields() -> Vec<String> {
+    vec![
+        "api_key".into(),
+        "access_token".into(),
+        "refresh_token".into(),
+        "token".into(),
+        "secret".into(),
+        "password".into(),
+        "ssn".into(),
+        "id_number".into(),
+    ]
+}
+
+fn default_redaction_text() -> String {
+    "[REDACTED]".to_string()
+}
+
 fn default_max_response_body_bytes() -> usize {
     65_536
+}
+
+impl Default for ReplayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_replay_enabled(),
+            capture_request_headers: default_capture_request_headers(),
+            capture_response_headers: default_capture_response_headers(),
+            redact_request_headers: default_redact_request_headers(),
+            redact_response_headers: default_redact_response_headers(),
+            redact_json_fields: default_redact_json_fields(),
+            redaction_text: default_redaction_text(),
+            max_response_body_bytes: default_max_response_body_bytes(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -673,6 +721,10 @@ replay:
   enabled: true
   capture_request_headers: ["content-type", "accept", "x-request-id"]
   capture_response_headers: ["content-type", "x-upstream-version"]
+  redact_request_headers: ["authorization", "cookie", "x-api-key"]
+  redact_response_headers: ["set-cookie", "x-api-key"]
+  redact_json_fields: ["api_key", "access_token", "refresh_token", "token", "secret", "password", "ssn", "id_number"]
+  redaction_text: "[REDACTED]"
   max_response_body_bytes: 65536
 "#;
 
@@ -682,6 +734,16 @@ replay:
         let config = crate::config::AppConfig::load(tmp.path()).unwrap();
         assert!(config.replay.enabled);
         assert_eq!(config.replay.capture_request_headers.len(), 3);
+        assert_eq!(config.replay.redact_request_headers.len(), 3);
+        assert_eq!(config.replay.redact_response_headers.len(), 2);
+        assert!(
+            config
+                .replay
+                .redact_json_fields
+                .iter()
+                .any(|field| field == "password")
+        );
+        assert_eq!(config.replay.redaction_text, "[REDACTED]");
         assert_eq!(config.replay.max_response_body_bytes, 65536);
     }
 

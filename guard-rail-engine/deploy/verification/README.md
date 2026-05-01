@@ -6,6 +6,7 @@ This directory contains the Phase 7 pilot verification package for the blessed d
 
 - Docker
 - PostgreSQL reachable through `GUARDRAIL_DATABASE__URL`
+- `TEST_DATABASE_URL` for test-backed replay verification, or allow `replay-redaction.sh` to derive it from `GUARDRAIL_DATABASE__URL`
 - `GUARDRAIL_ADMIN__TOKEN`
 - Rust toolchain installed
 - `cargo-audit` installed for Rust dependency audits
@@ -31,13 +32,15 @@ export PHASE7_PG_CONTAINER=guardrail-postgres
 
 ## Result Artifacts
 
-Verification results are written under `guard-rail-engine/tmp/verification/<timestamp>/`.
+Verification results are written under `<repo-root>/tmp/verification/<timestamp>/`, regardless of the caller's current working directory.
 
 Each scenario writes a JSON summary with:
 - `scenario`
 - `status`
 - `timestamp`
 - `metrics`
+
+Wrapper-backed checks also retain the captured `cargo test` output beside the JSON artifact as `<scenario>.log` in the same timestamped result directory.
 
 ## Scenarios
 
@@ -107,6 +110,36 @@ Expected:
 - timeout drill returns `502`
 - error drill returns `500`
 
+### Hard Audit Mode
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/hard-audit-mode.sh
+```
+
+Expected:
+- writes `hard-audit-mode.json`
+- writes `hard-audit-mode.log`
+- exits `0`
+- runs the focused smoke test for strict fail-closed audit behavior before forwarding upstream traffic
+- requires concrete proof in captured cargo output that the exact smoke test ran and passed
+- fails if `required_audit_mode_does_not_forward_without_pre_forward_intent` regresses
+
+### Replay Redaction
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/replay-redaction.sh
+```
+
+Expected:
+- writes `replay-redaction.json`
+- writes `replay-redaction.log`
+- exits `0`
+- runs the focused replay artifact redaction tests already present in the repo
+- requires concrete proof in captured cargo output that both focused replay tests ran and passed
+- verifies both request and response JSON persistence stay redacted
+
 ### Dependency Audits
 
 ```bash
@@ -133,7 +166,7 @@ export PHASE7_SUITE_ID=$(date -u +"%Y%m%dT%H%M%SZ")
 bash scripts/verification/run-phase7-suite.sh
 ```
 
-The suite orchestrates all scenarios in order and exits non-zero if any scenario fails. Results are aggregated under `tmp/verification/${PHASE7_SUITE_ID}/`.
+The suite orchestrates all scenarios in order and exits non-zero if any scenario fails. Results are aggregated under `<repo-root>/tmp/verification/${PHASE7_SUITE_ID}/`.
 
 ## Interpreting Results
 
@@ -143,3 +176,5 @@ Each scenario JSON contains:
 - `metrics`: scenario-specific measurements
 
 A failing suite means at least one scenario exited non-zero. Investigate the corresponding JSON file and any console output for the specific failure.
+
+For wrapper-backed failures, inspect the sibling `.log` artifact in the same `<repo-root>/tmp/verification/<timestamp>/` directory for the preserved `cargo test` output.
