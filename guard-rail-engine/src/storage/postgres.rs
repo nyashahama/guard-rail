@@ -111,7 +111,7 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
         ));
     }
 
-    let intent_foreign_key_count = sqlx::query_scalar::<_, i64>(
+    let tenant_foreign_key_count = sqlx::query_scalar::<_, i64>(
         r#"
         select count(*)
         from pg_constraint constraints
@@ -123,15 +123,75 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
           and table_ns.nspname = 'public'
           and table_ref.relname = 'execution_intents'
           and target_ns.nspname = 'public'
-          and target_ref.relname in ('tenants', 'api_keys')
+          and target_ref.relname = 'tenants'
+          and constraints.conkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = table_ref.oid
+                      and attname = 'tenant_id'
+                      and not attisdropped
+                )
+          ]
+          and constraints.confkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = target_ref.oid
+                      and attname = 'id'
+                      and not attisdropped
+                )
+          ]
         "#,
     )
     .fetch_one(pool)
     .await?;
 
-    if intent_foreign_key_count != 2 {
+    if tenant_foreign_key_count != 1 {
         return Err(sqlx::Error::Protocol(
-            "execution_intents schema missing required foreign keys".into(),
+            "execution_intents schema missing tenant foreign key".into(),
+        ));
+    }
+
+    let api_key_foreign_key_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        join pg_class target_ref on target_ref.oid = constraints.confrelid
+        join pg_namespace target_ns on target_ns.oid = target_ref.relnamespace
+        where constraints.contype = 'f'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and target_ns.nspname = 'public'
+          and target_ref.relname = 'api_keys'
+          and constraints.conkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = table_ref.oid
+                      and attname = 'api_key_id'
+                      and not attisdropped
+                )
+          ]
+          and constraints.confkey = array[
+                (
+                    select attnum
+                    from pg_attribute
+                    where attrelid = target_ref.oid
+                      and attname = 'id'
+                      and not attisdropped
+                )
+          ]
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if api_key_foreign_key_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing api key foreign key".into(),
         ));
     }
 
@@ -144,7 +204,8 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
         where constraints.contype = 'c'
           and table_ns.nspname = 'public'
           and table_ref.relname = 'execution_intents'
-          and pg_get_constraintdef(constraints.oid) like '%request_size_bytes >= 0%'
+          and regexp_replace(pg_get_expr(constraints.conbin, constraints.conrelid), '\s+', ' ', 'g')
+              = '(request_size_bytes >= 0)'
         "#,
     )
     .fetch_one(pool)
@@ -165,9 +226,12 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
         where constraints.contype = 'c'
           and table_ns.nspname = 'public'
           and table_ref.relname = 'execution_intents'
-          and pg_get_constraintdef(constraints.oid) like '%finalization_error is null%'
-          and pg_get_constraintdef(constraints.oid) like '%finalized_at is not null%'
-          and pg_get_constraintdef(constraints.oid) like '%finalization_failed%'
+          and replace(
+                regexp_replace(pg_get_expr(constraints.conbin, constraints.conrelid), '\s+', ' ', 'g'),
+                '::text',
+                ''
+              )
+              = '(((status = ''pending'') AND (finalization_error IS NULL) AND (finalized_at IS NULL)) OR ((status = ''finalized'') AND (finalization_error IS NULL) AND (finalized_at IS NOT NULL)) OR ((status = ''finalization_failed'') AND (finalization_error IS NOT NULL) AND (finalized_at IS NULL)))'
         "#,
     )
     .fetch_one(pool)

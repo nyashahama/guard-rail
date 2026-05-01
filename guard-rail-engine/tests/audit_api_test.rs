@@ -594,21 +594,21 @@ async fn schema_ready_requires_execution_intents_schema() {
         r#"
         create table execution_intents (
             execution_id text primary key,
-            route_id text,
-            tenant_id text,
-            api_key_id text,
-            method text,
-            source_ip text,
+            route_id text not null,
+            tenant_id uuid,
+            api_key_id uuid,
+            method text not null,
+            source_ip text not null,
             content_type text,
             user_agent text,
-            request_size_bytes text,
-            request_body_sha256 text,
-            route_config_hash text,
-            policy_set_hash text,
-            status text,
+            request_size_bytes bigint not null,
+            request_body_sha256 text not null,
+            route_config_hash text not null,
+            policy_set_hash text not null,
+            status text not null,
             finalization_error text,
-            created_at timestamptz,
-            updated_at timestamptz,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now(),
             finalized_at timestamptz
         )
         "#,
@@ -629,9 +629,13 @@ async fn schema_ready_requires_execution_intents_schema() {
         .unwrap();
 
     let err = check_result.unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("execution_intents schema does not match required column definitions"));
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("execution_intents schema missing tenant foreign key")
+            || err_text.contains("execution_intents schema missing api key foreign key")
+            || err_text.contains("execution_intents schema missing request size invariant")
+            || err_text.contains("execution_intents schema missing terminal state invariant")
+    );
 }
 
 #[tokio::test]
