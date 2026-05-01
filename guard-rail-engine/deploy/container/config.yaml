@@ -16,6 +16,7 @@ logging:
   format: "json"
 
 database:
+  # Intentionally blank in the sample. Production startup validation rejects this until a real DSN is set.
   url: ""
   max_connections: 10
 
@@ -24,6 +25,7 @@ audit:
   persistence_mode: required_before_response
 
 admin:
+  # Intentionally blank in the sample. Production startup validation rejects this until a non-default token is set.
   token: ""
 
 admin_server:
