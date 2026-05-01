@@ -295,18 +295,18 @@ fn redact_persisted_response_body(
     replay: &ReplayConfig,
 ) -> (String, Option<String>, bool) {
     let response_body_str = String::from_utf8_lossy(response_body_bytes).to_string();
-    let persisted_body_candidate = match serde_json::from_str::<serde_json::Value>(&response_body_str)
-    {
-        Ok(mut json_body) => {
-            redaction::redact_json_fields(
-                &mut json_body,
-                &replay.redact_json_fields,
-                &replay.redaction_text,
-            );
-            serde_json::to_string(&json_body).unwrap_or(response_body_str)
-        }
-        Err(_) => response_body_str,
-    };
+    let persisted_body_candidate =
+        match serde_json::from_str::<serde_json::Value>(&response_body_str) {
+            Ok(mut json_body) => {
+                redaction::redact_json_fields(
+                    &mut json_body,
+                    &replay.redact_json_fields,
+                    &replay.redaction_text,
+                );
+                serde_json::to_string(&json_body).unwrap_or(response_body_str)
+            }
+            Err(_) => response_body_str,
+        };
     let (persisted_body, truncated) =
         truncate_utf8_to_max_bytes(persisted_body_candidate, replay.max_response_body_bytes);
 

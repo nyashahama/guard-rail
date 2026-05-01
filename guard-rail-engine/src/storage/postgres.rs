@@ -348,8 +348,7 @@ impl PostgresAuditStore {
             ExecutionIntentStatus::FinalizationFailed => {
                 let Some(finalization_error) = finalization_error else {
                     return Err(sqlx::Error::Protocol(
-                        "finalization_failed execution intents require a finalization error"
-                            .into(),
+                        "finalization_failed execution intents require a finalization error".into(),
                     ));
                 };
                 (Some(finalization_error), None)
