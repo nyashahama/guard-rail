@@ -590,18 +590,34 @@ async fn schema_ready_requires_execution_intents_schema() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("create table execution_intents (execution_id text primary key)")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"
+        create table execution_intents (
+            execution_id text primary key,
+            route_id text,
+            tenant_id text,
+            api_key_id text,
+            method text,
+            source_ip text,
+            content_type text,
+            user_agent text,
+            request_size_bytes text,
+            request_body_sha256 text,
+            route_config_hash text,
+            policy_set_hash text,
+            status text,
+            finalization_error text,
+            created_at timestamptz,
+            updated_at timestamptz,
+            finalized_at timestamptz
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
-    let err = guard_rail_engine::storage::postgres::assert_schema_ready(&pool)
-        .await
-        .unwrap_err();
-
-    assert!(err
-        .to_string()
-        .contains("execution_intents schema missing required columns"));
+    let check_result = guard_rail_engine::storage::postgres::assert_schema_ready(&pool).await;
 
     sqlx::query("drop table execution_intents")
         .execute(&pool)
@@ -611,6 +627,11 @@ async fn schema_ready_requires_execution_intents_schema() {
         .execute(&pool)
         .await
         .unwrap();
+
+    let err = check_result.unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("execution_intents schema does not match required column definitions"));
 }
 
 #[tokio::test]

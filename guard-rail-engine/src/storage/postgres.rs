@@ -70,39 +70,112 @@ pub async fn assert_schema_ready(pool: &PgPool) -> Result<(), sqlx::Error> {
         ));
     }
 
-    let intent_column_count = sqlx::query_scalar::<_, i64>(
+    let intent_column_signature_count = sqlx::query_scalar::<_, i64>(
         r#"
+        with expected(column_name, data_type, is_nullable) as (
+            values
+                ('execution_id', 'text', 'NO'),
+                ('route_id', 'text', 'NO'),
+                ('tenant_id', 'uuid', 'YES'),
+                ('api_key_id', 'uuid', 'YES'),
+                ('method', 'text', 'NO'),
+                ('source_ip', 'text', 'NO'),
+                ('content_type', 'text', 'YES'),
+                ('user_agent', 'text', 'YES'),
+                ('request_size_bytes', 'bigint', 'NO'),
+                ('request_body_sha256', 'text', 'NO'),
+                ('route_config_hash', 'text', 'NO'),
+                ('policy_set_hash', 'text', 'NO'),
+                ('status', 'text', 'NO'),
+                ('finalization_error', 'text', 'YES'),
+                ('created_at', 'timestamp with time zone', 'NO'),
+                ('updated_at', 'timestamp with time zone', 'NO'),
+                ('finalized_at', 'timestamp with time zone', 'YES')
+        )
         select count(*)
-        from information_schema.columns
-        where table_schema = 'public'
-          and table_name = 'execution_intents'
-          and column_name in (
-            'execution_id',
-            'route_id',
-            'tenant_id',
-            'api_key_id',
-            'method',
-            'source_ip',
-            'content_type',
-            'user_agent',
-            'request_size_bytes',
-            'request_body_sha256',
-            'route_config_hash',
-            'policy_set_hash',
-            'status',
-            'finalization_error',
-            'created_at',
-            'updated_at',
-            'finalized_at'
-          )
+        from expected
+        join information_schema.columns columns
+          on columns.table_schema = 'public'
+         and columns.table_name = 'execution_intents'
+         and columns.column_name = expected.column_name
+         and columns.data_type = expected.data_type
+         and columns.is_nullable = expected.is_nullable
         "#,
     )
     .fetch_one(pool)
     .await?;
 
-    if intent_column_count != 17 {
+    if intent_column_signature_count != 17 {
         return Err(sqlx::Error::Protocol(
-            "execution_intents schema missing required columns".into(),
+            "execution_intents schema does not match required column definitions".into(),
+        ));
+    }
+
+    let intent_foreign_key_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        join pg_class target_ref on target_ref.oid = constraints.confrelid
+        join pg_namespace target_ns on target_ns.oid = target_ref.relnamespace
+        where constraints.contype = 'f'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and target_ns.nspname = 'public'
+          and target_ref.relname in ('tenants', 'api_keys')
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if intent_foreign_key_count != 2 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing required foreign keys".into(),
+        ));
+    }
+
+    let request_size_check_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        where constraints.contype = 'c'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and pg_get_constraintdef(constraints.oid) like '%request_size_bytes >= 0%'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if request_size_check_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing request size invariant".into(),
+        ));
+    }
+
+    let terminal_state_check_count = sqlx::query_scalar::<_, i64>(
+        r#"
+        select count(*)
+        from pg_constraint constraints
+        join pg_class table_ref on table_ref.oid = constraints.conrelid
+        join pg_namespace table_ns on table_ns.oid = table_ref.relnamespace
+        where constraints.contype = 'c'
+          and table_ns.nspname = 'public'
+          and table_ref.relname = 'execution_intents'
+          and pg_get_constraintdef(constraints.oid) like '%finalization_error is null%'
+          and pg_get_constraintdef(constraints.oid) like '%finalized_at is not null%'
+          and pg_get_constraintdef(constraints.oid) like '%finalization_failed%'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if terminal_state_check_count != 1 {
+        return Err(sqlx::Error::Protocol(
+            "execution_intents schema missing terminal state invariant".into(),
         ));
     }
 
