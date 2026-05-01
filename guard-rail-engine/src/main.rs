@@ -136,6 +136,14 @@ fn normalize_literal_ip_host(host: &str) -> &str {
         .unwrap_or(host)
 }
 
+fn format_bind_address(host: &str, port: u16) -> String {
+    let normalized_host = normalize_literal_ip_host(host.trim());
+    match normalized_host.parse::<IpAddr>() {
+        Ok(IpAddr::V6(_)) => format!("[{}]:{}", normalized_host, port),
+        _ => format!("{}:{}", host.trim(), port),
+    }
+}
+
 fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
     std::time::Duration::from_millis(config.audit.write_timeout_ms)
 }
@@ -305,7 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin_app = proxy::build_admin_router(state.clone(), app_config.admin.token.clone());
 
     let main_addr: SocketAddr =
-        format!("{}:{}", app_config.server.host, app_config.server.port).parse()?;
+        format_bind_address(&app_config.server.host, app_config.server.port).parse()?;
 
     tracing::info!("Guard Rail Engine starting main listener on {}", main_addr);
 
@@ -313,7 +321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let admin_handle = if let Some(admin_config) = &app_config.admin_server {
         let admin_addr: SocketAddr =
-            format!("{}:{}", admin_config.host, admin_config.port).parse()?;
+            format_bind_address(&admin_config.host, admin_config.port).parse()?;
         tracing::info!(
             "Guard Rail Engine starting admin listener on {}",
             admin_addr
@@ -708,6 +716,12 @@ replay:
     }
 
     #[test]
+    fn test_format_bind_address_brackets_ipv6_literals() {
+        assert_eq!(format_bind_address("::1", 8081), "[::1]:8081");
+        assert_eq!(format_bind_address("[::1]", 8081), "[::1]:8081");
+    }
+
+    #[test]
     fn test_validate_startup_security_production_rejects_wildcard_admin_listener_hosts() {
         for host in ["0.0.0.0", "::", "0:0:0:0:0:0:0:0", "[::]"] {
             let cfg = test_config(TestConfigOptions {
@@ -717,6 +731,20 @@ replay:
             let err = validate_startup_security(&cfg).unwrap_err();
             assert!(err.contains("admin listener"));
         }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_allows_loopback_ipv6_admin_listener() {
+        let cfg = test_config(TestConfigOptions {
+            admin_server_host: Some("::1"),
+            ..Default::default()
+        });
+
+        assert!(validate_startup_security(&cfg).is_ok());
+        assert_eq!(
+            format_bind_address(&cfg.admin_server.unwrap().host, 8081),
+            "[::1]:8081"
+        );
     }
 
     #[test]
