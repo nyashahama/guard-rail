@@ -116,8 +116,11 @@ bash scripts/verification/dependency-audits.sh
 
 Expected:
 - writes `dependency-audits.json`
-- exits `0` if prerequisites are present and audits pass
-- exits `0` with status `skipped` if prerequisites are missing
+- exits `0` when Rust and Node dependency audits pass
+- exits `0` with status `skipped` in default mode when audit prerequisites are missing or skipped
+- exits non-zero when `cargo audit` reports Rust dependency vulnerabilities
+- exits non-zero when `npm audit --audit-level=high` reports high-or-above Node dependency vulnerabilities
+- exits non-zero when `REQUIRE_DEPENDENCY_AUDIT=true` and audit prerequisites are missing or skipped
 - `cargo audit` covers Rust dependencies
 - `npm audit --audit-level=high` covers Node dependencies
 
