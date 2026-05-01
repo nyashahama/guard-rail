@@ -17,7 +17,7 @@ if [[ -z "${TEST_DATABASE_URL:-}" && -n "${GUARDRAIL_DATABASE__URL:-}" ]]; then
 fi
 
 scenario="replay-redaction"
-artifact_dir="$(phase7_result_dir)"
+artifact_dir="$(cd "$(phase7_result_dir)" && pwd)"
 log_file="${artifact_dir}/${scenario}.log"
 tests=(
   "test_replay_artifacts_redact_sensitive_request_json_before_persistence"

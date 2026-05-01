@@ -10,7 +10,7 @@ export PHASE7_SUITE_ID="${PHASE7_SUITE_ID:-$(phase7_timestamp)}"
 
 scenario="hard-audit-mode"
 test_target="required_audit_mode_does_not_forward_without_pre_forward_intent"
-artifact_dir="$(phase7_result_dir)"
+artifact_dir="$(cd "$(phase7_result_dir)" && pwd)"
 log_file="${artifact_dir}/${scenario}.log"
 
 : >"${log_file}"
