@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "${SCRIPT_DIR}/common.sh"
+ENGINE_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 phase7_require_env GUARDRAIL_DATABASE__URL
 phase7_require_env GUARDRAIL_ADMIN__TOKEN
@@ -124,9 +125,11 @@ trap cleanup EXIT
 
 start_upstream
 
+pushd "${ENGINE_DIR}" >/dev/null
 cargo run --quiet -- migrate --config "${config_file}" >/dev/null
 cargo run --quiet -- serve --config "${config_file}" >"${log_file}" 2>&1 &
 server_pid=$!
+popd >/dev/null
 
 wait_for_health "${base_url}/health"
 wait_for_ready "${base_url}/ready"
