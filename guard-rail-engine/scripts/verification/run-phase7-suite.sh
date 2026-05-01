@@ -13,6 +13,8 @@ scripts=(
   "drain-under-load.sh"
   "db-degradation.sh"
   "upstream-degradation.sh"
+  "hard-audit-mode.sh"
+  "replay-redaction.sh"
   "dependency-audits.sh"
 )
 

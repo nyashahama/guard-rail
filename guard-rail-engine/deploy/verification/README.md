@@ -6,6 +6,7 @@ This directory contains the Phase 7 pilot verification package for the blessed d
 
 - Docker
 - PostgreSQL reachable through `GUARDRAIL_DATABASE__URL`
+- `TEST_DATABASE_URL` for test-backed replay verification, or allow `replay-redaction.sh` to derive it from `GUARDRAIL_DATABASE__URL`
 - `GUARDRAIL_ADMIN__TOKEN`
 - Rust toolchain installed
 - `cargo-audit` installed for Rust dependency audits
@@ -106,6 +107,32 @@ Expected:
 - exits `0`
 - timeout drill returns `502`
 - error drill returns `500`
+
+### Hard Audit Mode
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/hard-audit-mode.sh
+```
+
+Expected:
+- writes `hard-audit-mode.json`
+- exits `0`
+- runs the focused smoke test for strict fail-closed audit behavior before forwarding upstream traffic
+- fails if `required_audit_mode_does_not_forward_without_pre_forward_intent` regresses
+
+### Replay Redaction
+
+```bash
+cd /home/nyasha-hama/projects/guard-rail/guard-rail-engine
+bash scripts/verification/replay-redaction.sh
+```
+
+Expected:
+- writes `replay-redaction.json`
+- exits `0`
+- runs the focused replay artifact redaction tests already present in the repo
+- verifies both request and response JSON persistence stay redacted
 
 ### Dependency Audits
 
