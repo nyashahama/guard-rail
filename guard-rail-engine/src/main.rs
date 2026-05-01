@@ -88,9 +88,9 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
             );
         }
 
-        if config.replay.redact_request_headers.is_empty()
-            || config.replay.redact_response_headers.is_empty()
-            || config.replay.redact_json_fields.is_empty()
+        if !has_non_blank_entries(&config.replay.redact_request_headers)
+            || !has_non_blank_entries(&config.replay.redact_response_headers)
+            || !has_non_blank_entries(&config.replay.redact_json_fields)
             || config.replay.redaction_text.trim().is_empty()
         {
             return Err(
@@ -118,6 +118,14 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn has_non_blank_entries(values: &[String]) -> bool {
+    values.iter().any(|value| !value.trim().is_empty())
+}
+
+fn configured_audit_write_timeout(config: &config::AppConfig) -> std::time::Duration {
+    std::time::Duration::from_millis(config.audit.write_timeout_ms)
 }
 
 #[tokio::main]
@@ -223,7 +231,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let audit_store = storage::postgres::PostgresAuditStore::new(
         pool.clone(),
-        std::time::Duration::from_millis(250),
+        configured_audit_write_timeout(&app_config),
     );
     let lifecycle = shutdown::LifecycleState::new();
 
@@ -602,6 +610,43 @@ replay:
             let err = validate_startup_security(&test_config(options)).unwrap_err();
             assert!(err.contains("replay redaction policy"));
         }
+    }
+
+    #[test]
+    fn test_validate_startup_security_production_rejects_whitespace_only_replay_redaction_entries()
+    {
+        let cases = [
+            TestConfigOptions {
+                redact_request_headers: r#"["   "]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_response_headers: r#"["\t"]"#,
+                ..Default::default()
+            },
+            TestConfigOptions {
+                redact_json_fields: r#"["  "]"#,
+                ..Default::default()
+            },
+        ];
+
+        for options in cases {
+            let err = validate_startup_security(&test_config(options)).unwrap_err();
+            assert!(err.contains("replay redaction policy"));
+        }
+    }
+
+    #[test]
+    fn test_configured_audit_write_timeout_uses_configured_value() {
+        let cfg = test_config(TestConfigOptions {
+            audit_write_timeout_ms: 987,
+            ..Default::default()
+        });
+
+        assert_eq!(
+            configured_audit_write_timeout(&cfg),
+            std::time::Duration::from_millis(987)
+        );
     }
 
     #[test]
