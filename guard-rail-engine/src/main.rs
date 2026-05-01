@@ -110,13 +110,13 @@ fn validate_startup_security(config: &config::AppConfig) -> Result<(), String> {
         }
 
         let admin_host = normalize_literal_ip_host(admin_server.host.trim());
-        if let Ok(ip_addr) = admin_host.parse::<IpAddr>() {
-            if ip_addr.is_unspecified() {
-                return Err(
-                    "invalid admin listener for production runtime; admin listener cannot bind to an unspecified address"
-                        .to_string(),
-                );
-            }
+        if let Ok(ip_addr) = admin_host.parse::<IpAddr>()
+            && ip_addr.is_unspecified()
+        {
+            return Err(
+                "invalid admin listener for production runtime; admin listener cannot bind to an unspecified address"
+                    .to_string(),
+            );
         }
     }
 
