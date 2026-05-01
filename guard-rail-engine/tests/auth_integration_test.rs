@@ -208,6 +208,7 @@ routes:
         policies: std::sync::Arc::new(tokio::sync::RwLock::new(policies)),
         http_client: reqwest::Client::new(),
         audit_store: Some(store.clone()),
+        audit_persistence_mode: guard_rail_engine::config::AuditPersistenceMode::BestEffort,
         metrics: None,
         lifecycle: guard_rail_engine::shutdown::LifecycleState::new(),
         readiness_probe_timeout_ms: 250,

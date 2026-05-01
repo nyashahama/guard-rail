@@ -207,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         policies,
         http_client,
         audit_store: Some(audit_store),
+        audit_persistence_mode: app_config.audit.persistence_mode,
         metrics: metrics.clone(),
         lifecycle: lifecycle.clone(),
         readiness_probe_timeout_ms: app_config.observability.readiness_probe_timeout_ms,

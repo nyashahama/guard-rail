@@ -4,7 +4,7 @@ pub mod response;
 use crate::audit::hash::{hash_body, hash_string};
 use crate::auth::context::{RequestAuthContext, authenticate_tenant_request};
 use crate::auth::rate_limit::TenantRateLimiter;
-use crate::config::ReplayConfig;
+use crate::config::{AuditPersistenceMode, ReplayConfig};
 use crate::execution::{ExecutionRecord, ExecutionVerdict};
 use crate::logging::ExecutionLog;
 use crate::observability::metrics::Metrics;
@@ -46,6 +46,7 @@ pub struct AppState {
     pub policies: Arc<RwLock<PolicySet>>,
     pub http_client: Client,
     pub audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
+    pub audit_persistence_mode: crate::config::AuditPersistenceMode,
     pub metrics: Option<Arc<Metrics>>,
     pub lifecycle: LifecycleState,
     pub readiness_probe_timeout_ms: u64,
@@ -70,6 +71,7 @@ impl std::fmt::Debug for AppState {
             .field("policies", &"<RwLock<PolicySet>>")
             .field("http_client", &"<Client>")
             .field("audit_store", &self.audit_store.is_some())
+            .field("audit_persistence_mode", &self.audit_persistence_mode)
             .field("metrics", &self.metrics.is_some())
             .field("route_config_hash", &self.route_config_hash)
             .field("policy_set_hash", &self.policy_set_hash)
@@ -77,52 +79,78 @@ impl std::fmt::Debug for AppState {
     }
 }
 
-#[allow(dead_code)]
-async fn emit_and_persist(
-    record: ExecutionRecord,
-    audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
-    _metrics: Option<Arc<Metrics>>,
-) {
-    ExecutionLog::from(&record).emit();
-    if let Some(store) = audit_store {
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            store.insert_execution(&record),
-        )
-        .await;
-    }
-}
-
-fn spawn_emit_and_persist(
+async fn persist_execution_record(
     record: ExecutionRecord,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
     metrics: Option<Arc<Metrics>>,
-) {
+    mode: AuditPersistenceMode,
+) -> Result<(), ()> {
     let log = ExecutionLog::from(&record);
     log.emit();
-    if let Some(store) = audit_store {
-        tokio::spawn(async move {
+
+    match (mode, audit_store) {
+        (AuditPersistenceMode::BestEffort, Some(store)) => {
+            tokio::spawn(async move {
+                if let Err(e) = store.insert_execution(&record).await {
+                    tracing::error!(error = %e, execution_id = %record.execution_id, "failed to persist execution");
+                    if let Some(metrics) = metrics {
+                        metrics.record_audit_persist_failure("insert_execution");
+                    }
+                }
+            });
+            Ok(())
+        }
+        (AuditPersistenceMode::BestEffort, None) => Ok(()),
+        (AuditPersistenceMode::RequiredBeforeResponse, Some(store)) => {
             if let Err(e) = store.insert_execution(&record).await {
                 tracing::error!(error = %e, execution_id = %record.execution_id, "failed to persist execution");
                 if let Some(metrics) = metrics {
                     metrics.record_audit_persist_failure("insert_execution");
                 }
+                Err(())
+            } else {
+                Ok(())
             }
-        });
+        }
+        (AuditPersistenceMode::RequiredBeforeResponse, None) => {
+            tracing::error!(execution_id = %record.execution_id, "audit persistence required but audit store is unavailable");
+            if let Some(metrics) = metrics {
+                metrics.record_audit_persist_failure("missing_audit_store");
+            }
+            Err(())
+        }
     }
 }
 
-fn spawn_emit_and_persist_bundle(
+async fn persist_execution_bundle(
     record: ExecutionRecord,
     artifacts: Option<ReplayArtifacts>,
     snapshot: Option<snapshot::PolicySnapshotRecord>,
     audit_store: Option<crate::storage::postgres::PostgresAuditStore>,
     metrics: Option<Arc<Metrics>>,
-) {
+    mode: AuditPersistenceMode,
+) -> Result<(), ()> {
     let log = ExecutionLog::from(&record);
     log.emit();
-    if let Some(store) = audit_store {
-        tokio::spawn(async move {
+
+    match (mode, audit_store) {
+        (AuditPersistenceMode::BestEffort, Some(store)) => {
+            tokio::spawn(async move {
+                if let Err(e) = store
+                    .insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref())
+                    .await
+                {
+                    tracing::error!(error = %e, execution_id = %record.execution_id, "failed to persist execution bundle");
+                    if let Some(metrics) = metrics {
+                        metrics.record_audit_persist_failure("insert_execution_bundle");
+                        metrics.record_replay_persist_failure("insert_execution_bundle");
+                    }
+                }
+            });
+            Ok(())
+        }
+        (AuditPersistenceMode::BestEffort, None) => Ok(()),
+        (AuditPersistenceMode::RequiredBeforeResponse, Some(store)) => {
             if let Err(e) = store
                 .insert_execution_bundle(&record, artifacts.as_ref(), snapshot.as_ref())
                 .await
@@ -132,8 +160,19 @@ fn spawn_emit_and_persist_bundle(
                     metrics.record_audit_persist_failure("insert_execution_bundle");
                     metrics.record_replay_persist_failure("insert_execution_bundle");
                 }
+                Err(())
+            } else {
+                Ok(())
             }
-        });
+        }
+        (AuditPersistenceMode::RequiredBeforeResponse, None) => {
+            tracing::error!(execution_id = %record.execution_id, "audit persistence required but audit store is unavailable");
+            if let Some(metrics) = metrics {
+                metrics.record_audit_persist_failure("missing_audit_store");
+                metrics.record_replay_persist_failure("missing_audit_store");
+            }
+            Err(())
+        }
     }
 }
 
@@ -256,11 +295,17 @@ pub async fn handle_execute(
                         "REJECTED",
                         total_start.elapsed().as_secs_f64(),
                     );
-                    spawn_emit_and_persist(
+                    if persist_execution_record(
                         record,
                         state.audit_store.clone(),
                         state.metrics.clone(),
-                    );
+                        state.audit_persistence_mode,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return response::audit_persistence_error_response(&execution_id);
+                    }
                     return response::reject_response(
                         &execution_id,
                         "Route is not bound to a tenant",
@@ -322,11 +367,17 @@ pub async fn handle_execute(
                             total_start.elapsed().as_secs_f64(),
                         );
                         tracing::Span::current().record("verdict", "REJECTED");
-                        spawn_emit_and_persist(
+                        if persist_execution_record(
                             record,
                             state.audit_store.clone(),
                             state.metrics.clone(),
-                        );
+                            state.audit_persistence_mode,
+                        )
+                        .await
+                        .is_err()
+                        {
+                            return response::audit_persistence_error_response(&execution_id);
+                        }
                         return (
                             axum::http::StatusCode::TOO_MANY_REQUESTS,
                             "Rate limit exceeded",
@@ -382,11 +433,17 @@ pub async fn handle_execute(
                         "REJECTED",
                         total_start.elapsed().as_secs_f64(),
                     );
-                    spawn_emit_and_persist(
+                    if persist_execution_record(
                         record,
                         state.audit_store.clone(),
                         state.metrics.clone(),
-                    );
+                        state.audit_persistence_mode,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return response::audit_persistence_error_response(&execution_id);
+                    }
                     return (axum::http::StatusCode::NOT_FOUND, "Route not found").into_response();
                 }
                 Ok(RequestAuthContext::Admin) => (None, None, Some("admin".to_string())),
@@ -434,11 +491,17 @@ pub async fn handle_execute(
                         total_start.elapsed().as_secs_f64(),
                     );
                     tracing::Span::current().record("verdict", "REJECTED");
-                    spawn_emit_and_persist(
+                    if persist_execution_record(
                         record,
                         state.audit_store.clone(),
                         state.metrics.clone(),
-                    );
+                        state.audit_persistence_mode,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return response::audit_persistence_error_response(&execution_id);
+                    }
                     return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
                 }
             }
@@ -487,7 +550,17 @@ pub async fn handle_execute(
             total_start.elapsed().as_secs_f64(),
         );
         tracing::Span::current().record("verdict", "REJECTED");
-        spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+        if persist_execution_record(
+            record,
+            state.audit_store.clone(),
+            state.metrics.clone(),
+            state.audit_persistence_mode,
+        )
+        .await
+        .is_err()
+        {
+            return response::audit_persistence_error_response(&execution_id);
+        }
         return response::method_not_allowed_response(&execution_id);
     }
 
@@ -534,7 +607,17 @@ pub async fn handle_execute(
                 total_start.elapsed().as_secs_f64(),
             );
             tracing::Span::current().record("verdict", "REJECTED");
-            spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+            if persist_execution_record(
+                record,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await
+            .is_err()
+            {
+                return response::audit_persistence_error_response(&execution_id);
+            }
             return response::reject_response(&execution_id, "Invalid JSON body");
         }
     };
@@ -624,13 +707,19 @@ pub async fn handle_execute(
                     total_start.elapsed().as_secs_f64(),
                 );
                 tracing::Span::current().record("verdict", "BLOCKED");
-                spawn_emit_and_persist_bundle(
+                if persist_execution_bundle(
                     record,
                     Some(artifacts),
                     Some(snapshot),
                     state.audit_store.clone(),
                     state.metrics.clone(),
-                );
+                    state.audit_persistence_mode,
+                )
+                .await
+                .is_err()
+                {
+                    return response::audit_persistence_error_response(&execution_id);
+                }
             } else {
                 if let Some(metrics) = &state.metrics {
                     metrics.record_policy_latency(
@@ -648,7 +737,17 @@ pub async fn handle_execute(
                     total_start.elapsed().as_secs_f64(),
                 );
                 tracing::Span::current().record("verdict", "BLOCKED");
-                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+                if persist_execution_record(
+                    record,
+                    state.audit_store.clone(),
+                    state.metrics.clone(),
+                    state.audit_persistence_mode,
+                )
+                .await
+                .is_err()
+                {
+                    return response::audit_persistence_error_response(&execution_id);
+                }
             }
             return response::block_response(&execution_id, &policy_name, &rule_field, &message);
         }
@@ -768,15 +867,31 @@ pub async fn handle_execute(
                     response_body_sha256,
                     response_body_truncated: truncated,
                 };
-                spawn_emit_and_persist_bundle(
+                if persist_execution_bundle(
                     record,
                     Some(artifacts),
                     snapshot,
                     state.audit_store.clone(),
                     state.metrics.clone(),
-                );
+                    state.audit_persistence_mode,
+                )
+                .await
+                .is_err()
+                {
+                    return response::audit_persistence_error_response(&execution_id);
+                }
             } else {
-                spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+                if persist_execution_record(
+                    record,
+                    state.audit_store.clone(),
+                    state.metrics.clone(),
+                    state.audit_persistence_mode,
+                )
+                .await
+                .is_err()
+                {
+                    return response::audit_persistence_error_response(&execution_id);
+                }
             }
             result.response
         }
@@ -829,7 +944,17 @@ pub async fn handle_execute(
                     forward_elapsed.as_secs_f64(),
                 );
             }
-            spawn_emit_and_persist(record, state.audit_store.clone(), state.metrics.clone());
+            if persist_execution_record(
+                record,
+                state.audit_store.clone(),
+                state.metrics.clone(),
+                state.audit_persistence_mode,
+            )
+            .await
+            .is_err()
+            {
+                return response::audit_persistence_error_response(&execution_id);
+            }
             response::bad_gateway_response(&execution_id, &e)
         }
     }
@@ -1046,6 +1171,7 @@ impl AppState {
             policies: Arc::new(RwLock::new(PolicySet::new())),
             http_client: Client::new(),
             audit_store: None,
+            audit_persistence_mode: AuditPersistenceMode::BestEffort,
             metrics: None,
             lifecycle: LifecycleState::new(),
             readiness_probe_timeout_ms: 250,
@@ -1120,6 +1246,7 @@ pub fn compute_state(
         policies: Arc::new(RwLock::new(policy_set)),
         http_client,
         audit_store,
+        audit_persistence_mode: AuditPersistenceMode::BestEffort,
         metrics: None,
         lifecycle: LifecycleState::new(),
         readiness_probe_timeout_ms: 250,
