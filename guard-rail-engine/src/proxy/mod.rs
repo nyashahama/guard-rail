@@ -298,10 +298,7 @@ fn redact_persisted_response_body(
     replay: &ReplayConfig,
 ) -> (String, Option<String>, bool) {
     let response_body_str = String::from_utf8_lossy(response_body_bytes).to_string();
-    let (persisted_body_candidate, truncated) =
-        truncate_utf8_to_max_bytes(response_body_str, replay.max_response_body_bytes);
-
-    let persisted_body = match serde_json::from_str::<serde_json::Value>(&persisted_body_candidate)
+    let persisted_body_candidate = match serde_json::from_str::<serde_json::Value>(&response_body_str)
     {
         Ok(mut json_body) => {
             redaction::redact_json_fields(
@@ -309,10 +306,12 @@ fn redact_persisted_response_body(
                 &replay.redact_json_fields,
                 &replay.redaction_text,
             );
-            serde_json::to_string(&json_body).unwrap_or(persisted_body_candidate)
+            serde_json::to_string(&json_body).unwrap_or(response_body_str)
         }
-        Err(_) => persisted_body_candidate,
+        Err(_) => response_body_str,
     };
+    let (persisted_body, truncated) =
+        truncate_utf8_to_max_bytes(persisted_body_candidate, replay.max_response_body_bytes);
 
     let response_body_sha256 = Some(hash_string(&persisted_body));
     (persisted_body, response_body_sha256, truncated)
@@ -371,6 +370,27 @@ mod tests {
 
         assert!(truncated);
         assert_eq!(body, "😀");
+        assert!(body.len() <= replay.max_response_body_bytes);
+        assert_eq!(sha, Some(hash_string(&body)));
+    }
+
+    #[test]
+    fn redact_persisted_response_body_redacts_oversized_json_before_truncation() {
+        let replay = ReplayConfig {
+            max_response_body_bytes: 60,
+            redact_json_fields: vec!["api_key".into()],
+            redaction_text: "[REDACTED]".into(),
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body(
+            br#"{"api_key":"abc123","zz_padding":"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"}"#,
+            &replay,
+        );
+
+        assert!(truncated);
+        assert!(!body.contains("abc123"));
+        assert!(body.contains("[REDACTED]"));
         assert!(body.len() <= replay.max_response_body_bytes);
         assert_eq!(sha, Some(hash_string(&body)));
     }
