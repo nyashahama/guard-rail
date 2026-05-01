@@ -518,11 +518,7 @@ async fn execution_intent_can_be_inserted_and_finalized() {
     assert!(update_after_finalize.is_err());
 
     let missing_update = store
-        .update_execution_intent_status(
-            "GR-INTENT-MISSING",
-            ExecutionIntentStatus::Finalized,
-            None,
-        )
+        .update_execution_intent_status("GR-INTENT-MISSING", ExecutionIntentStatus::Finalized, None)
         .await;
     assert!(missing_update.is_err());
 
