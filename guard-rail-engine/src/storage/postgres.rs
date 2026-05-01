@@ -2,6 +2,37 @@ use sqlx::{PgPool, QueryBuilder, Row};
 
 pub use sqlx::postgres::PgPoolOptions;
 
+#[derive(Debug, Clone)]
+pub struct ExecutionIntentRecord {
+    pub execution_id: String,
+    pub route_id: String,
+    pub tenant_id: Option<uuid::Uuid>,
+    pub api_key_id: Option<uuid::Uuid>,
+    pub method: String,
+    pub source_ip: String,
+    pub content_type: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_size_bytes: usize,
+    pub request_body_sha256: String,
+    pub route_config_hash: String,
+    pub policy_set_hash: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionIntentStatus {
+    Finalized,
+    FinalizationFailed,
+}
+
+impl ExecutionIntentStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Finalized => "finalized",
+            Self::FinalizationFailed => "finalization_failed",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum IntegrityCheckError {
     #[allow(dead_code)]
@@ -76,6 +107,103 @@ impl PostgresAuditStore {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(sqlx::Error::Protocol("audit insert timed out".into())),
+        }
+    }
+
+    pub async fn insert_execution_intent(
+        &self,
+        intent: &ExecutionIntentRecord,
+    ) -> Result<(), sqlx::Error> {
+        let request_size_bytes = i64::try_from(intent.request_size_bytes).map_err(|_| {
+            sqlx::Error::Protocol("execution intent request size exceeds bigint".into())
+        })?;
+        let result = tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                insert into execution_intents (
+                    execution_id, route_id, tenant_id, api_key_id, method, source_ip,
+                    content_type, user_agent, request_size_bytes, request_body_sha256,
+                    route_config_hash, policy_set_hash, status
+                ) values (
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10,
+                    $11, $12, 'pending'
+                )
+                "#,
+            )
+            .bind(&intent.execution_id)
+            .bind(&intent.route_id)
+            .bind(&intent.tenant_id)
+            .bind(&intent.api_key_id)
+            .bind(&intent.method)
+            .bind(&intent.source_ip)
+            .bind(&intent.content_type)
+            .bind(&intent.user_agent)
+            .bind(request_size_bytes)
+            .bind(&intent.request_body_sha256)
+            .bind(&intent.route_config_hash)
+            .bind(&intent.policy_set_hash)
+            .execute(&self.pool),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(sqlx::Error::Protocol(
+                "execution intent insert timed out".into(),
+            )),
+        }
+    }
+
+    pub async fn update_execution_intent_status(
+        &self,
+        execution_id: &str,
+        status: ExecutionIntentStatus,
+        finalization_error: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        let status_value = status.as_str();
+        let finalized_at = match status {
+            ExecutionIntentStatus::Finalized => Some(chrono::Utc::now()),
+            ExecutionIntentStatus::FinalizationFailed => None,
+        };
+
+        let result = tokio::time::timeout(
+            self.write_timeout,
+            sqlx::query(
+                r#"
+                update execution_intents
+                set status = $2,
+                    finalization_error = $3,
+                    finalized_at = $4,
+                    updated_at = now()
+                where execution_id = $1
+                  and status = 'pending'
+                "#,
+            )
+            .bind(execution_id)
+            .bind(status_value)
+            .bind(finalization_error)
+            .bind(finalized_at)
+            .execute(&self.pool),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(query_result)) => {
+                if query_result.rows_affected() == 1 {
+                    Ok(())
+                } else {
+                    Err(sqlx::Error::Protocol(
+                        "execution intent status update affected no pending rows".into(),
+                    ))
+                }
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err(sqlx::Error::Protocol(
+                "execution intent status update timed out".into(),
+            )),
         }
     }
 
