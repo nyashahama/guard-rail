@@ -4,6 +4,7 @@ use guard_rail_engine::proxy::AppState;
 use guard_rail_engine::replay::snapshot::{build_snapshot, build_snapshot_from_set};
 use guard_rail_engine::routes::{Route, RouteAuthMode};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
+use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
@@ -148,6 +149,23 @@ async fn start_stage4_test_app() -> TestHarness {
             enabled: true,
             capture_request_headers: vec!["content-type".into(), "x-request-id".into()],
             capture_response_headers: vec!["content-type".into()],
+            redact_request_headers: vec![
+                "authorization".into(),
+                "cookie".into(),
+                "x-api-key".into(),
+            ],
+            redact_response_headers: vec!["set-cookie".into(), "x-api-key".into()],
+            redact_json_fields: vec![
+                "api_key".into(),
+                "access_token".into(),
+                "refresh_token".into(),
+                "token".into(),
+                "secret".into(),
+                "password".into(),
+                "ssn".into(),
+                "id_number".into(),
+            ],
+            redaction_text: "[REDACTED]".into(),
             max_response_body_bytes: 65536,
         },
     };
@@ -338,4 +356,46 @@ async fn test_allowed_execution_persists_response_artifacts_and_strips_authoriza
     assert_eq!(artifact.response_status, Some(200));
     assert!(artifact.response_body.as_deref().unwrap().contains("ok"));
     assert!(artifact.request_headers.get("authorization").is_none());
+}
+
+#[tokio::test]
+async fn test_replay_artifacts_redact_sensitive_request_json_before_persistence() {
+    let harness = start_stage4_test_app().await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/execute/open-route", harness.base_url))
+        .header("content-type", "application/json")
+        .body(
+            json!({
+                "email": "ops@example.com",
+                "password": "plaintext",
+                "nested": { "token": "abc123" }
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let execution_id = response.headers()["x-guardrail-execution-id"]
+        .to_str()
+        .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let artifact = harness
+        .store
+        .get_execution_artifacts(execution_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        artifact.request_body_json,
+        json!({
+            "email": "ops@example.com",
+            "password": "[REDACTED]",
+            "nested": { "token": "[REDACTED]" }
+        })
+    );
 }

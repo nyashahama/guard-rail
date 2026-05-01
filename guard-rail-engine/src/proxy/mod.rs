@@ -10,6 +10,7 @@ use crate::logging::ExecutionLog;
 use crate::observability::metrics::Metrics;
 use crate::policy::PolicySet;
 use crate::policy::engine::{Verdict, evaluate};
+use crate::replay::redaction;
 use crate::replay::snapshot;
 use crate::routes::RouteTable;
 use crate::shutdown::LifecycleState;
@@ -267,6 +268,29 @@ fn record_execution_metric(
     if let Some(metrics) = metrics {
         metrics.record_execution(route_id, method, verdict, latency_seconds);
     }
+}
+
+fn redact_replay_request_body(
+    payload: &serde_json::Value,
+    replay: &ReplayConfig,
+) -> serde_json::Value {
+    let mut redacted_payload = payload.clone();
+    redaction::redact_json_fields(
+        &mut redacted_payload,
+        &replay.redact_json_fields,
+        &replay.redaction_text,
+    );
+    redacted_payload
+}
+
+fn redact_replay_headers(
+    headers: serde_json::Value,
+    fields: &[String],
+    redaction_text: &str,
+) -> serde_json::Value {
+    let mut redacted_headers = headers;
+    redaction::redact_headers(&mut redacted_headers, fields, redaction_text);
+    redacted_headers
 }
 
 pub async fn handle_execute(
@@ -758,14 +782,20 @@ pub async fn handle_execute(
             if state.replay.enabled {
                 let capture_request_headers =
                     snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+                let redacted_request_body = redact_replay_request_body(&payload, &state.replay);
+                let redacted_request_headers = redact_replay_headers(
+                    capture_request_headers,
+                    &state.replay.redact_request_headers,
+                    &state.replay.redaction_text,
+                );
                 let policies = state.policies.read().await;
                 let snapshot = snapshot::build_snapshot_from_set(&route, &policies)
                     .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
                 drop(policies);
                 let artifacts = ReplayArtifacts {
                     snapshot_hash: snapshot.snapshot_hash.clone(),
-                    request_body_json: payload.clone(),
-                    request_headers: capture_request_headers,
+                    request_body_json: redacted_request_body,
+                    request_headers: redacted_request_headers,
                     response_status: None,
                     response_headers: None,
                     response_body: None,
@@ -850,11 +880,16 @@ pub async fn handle_execute(
     let (snapshot, request_headers_for_artifact) = if state.replay.enabled {
         let capture_request_headers =
             snapshot::filter_headers(&headers, &state.replay.capture_request_headers);
+        let redacted_request_headers = redact_replay_headers(
+            capture_request_headers,
+            &state.replay.redact_request_headers,
+            &state.replay.redaction_text,
+        );
         let policies = state.policies.read().await;
         let sp = snapshot::build_snapshot_from_set(&route, &policies)
             .unwrap_or_else(|_| snapshot::build_snapshot(&route, &[]));
         drop(policies);
-        (Some(sp), Some(capture_request_headers))
+        (Some(sp), Some(redacted_request_headers))
     } else {
         (None, None)
     };
@@ -947,6 +982,7 @@ pub async fn handle_execute(
             tracing::Span::current().record("verdict", "ALLOWED");
 
             if state.replay.enabled {
+                let redacted_request_body = redact_replay_request_body(&payload, &state.replay);
                 let response_body_bytes = result.body_bytes;
                 let response_body_str = String::from_utf8_lossy(&response_body_bytes).to_string();
                 let max_len = state.replay.max_response_body_bytes;
@@ -964,13 +1000,18 @@ pub async fn handle_execute(
                     result.response.headers(),
                     &state.replay.capture_response_headers,
                 );
+                let redacted_response_headers = redact_replay_headers(
+                    response_headers,
+                    &state.replay.redact_response_headers,
+                    &state.replay.redaction_text,
+                );
 
                 let artifacts = ReplayArtifacts {
                     snapshot_hash: snapshot.as_ref().unwrap().snapshot_hash.clone(),
-                    request_body_json: payload.clone(),
+                    request_body_json: redacted_request_body,
                     request_headers: request_headers_for_artifact.unwrap(),
                     response_status: Some(result.status),
-                    response_headers: Some(response_headers),
+                    response_headers: Some(redacted_response_headers),
                     response_body: Some(response_body),
                     response_body_sha256,
                     response_body_truncated: truncated,

@@ -38,6 +38,10 @@ replay:
   enabled: true
   capture_request_headers: ["content-type", "accept", "x-request-id"]
   capture_response_headers: ["content-type", "x-upstream-version"]
+  redact_request_headers: ["authorization", "cookie", "x-api-key"]
+  redact_response_headers: ["set-cookie", "x-api-key"]
+  redact_json_fields: ["api_key", "access_token", "refresh_token", "token", "secret", "password", "ssn", "id_number"]
+  redaction_text: "[REDACTED]"
   max_response_body_bytes: 65536
 
 observability:
