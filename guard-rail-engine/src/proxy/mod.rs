@@ -299,14 +299,7 @@ fn redact_persisted_response_body(
 ) -> (String, Option<String>, bool) {
     let response_body_str = String::from_utf8_lossy(response_body_bytes).to_string();
     let (persisted_body_candidate, truncated) =
-        if response_body_str.len() > replay.max_response_body_bytes {
-            (
-                response_body_str[..replay.max_response_body_bytes].to_string(),
-                true,
-            )
-        } else {
-            (response_body_str, false)
-        };
+        truncate_utf8_to_max_bytes(response_body_str, replay.max_response_body_bytes);
 
     let persisted_body = match serde_json::from_str::<serde_json::Value>(&persisted_body_candidate)
     {
@@ -323,6 +316,19 @@ fn redact_persisted_response_body(
 
     let response_body_sha256 = Some(hash_string(&persisted_body));
     (persisted_body, response_body_sha256, truncated)
+}
+
+fn truncate_utf8_to_max_bytes(input: String, max_bytes: usize) -> (String, bool) {
+    if input.len() <= max_bytes {
+        return (input, false);
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    (input[..end].to_string(), true)
 }
 
 #[cfg(test)]
@@ -351,6 +357,21 @@ mod tests {
                 "nested": { "password": "[REDACTED]" }
             })
         );
+        assert_eq!(sha, Some(hash_string(&body)));
+    }
+
+    #[test]
+    fn redact_persisted_response_body_truncates_multibyte_utf8_safely() {
+        let replay = ReplayConfig {
+            max_response_body_bytes: 5,
+            ..ReplayConfig::default()
+        };
+
+        let (body, sha, truncated) = redact_persisted_response_body("😀😀".as_bytes(), &replay);
+
+        assert!(truncated);
+        assert_eq!(body, "😀");
+        assert!(body.len() <= replay.max_response_body_bytes);
         assert_eq!(sha, Some(hash_string(&body)));
     }
 }
