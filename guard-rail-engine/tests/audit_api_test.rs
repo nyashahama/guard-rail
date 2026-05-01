@@ -480,6 +480,34 @@ async fn execution_intent_can_be_inserted_and_finalized() {
 
     assert_eq!(status, "finalized");
 
+    let failed_intent = ExecutionIntentRecord {
+        execution_id: "GR-INTENT-2".to_string(),
+        ..intent.clone()
+    };
+
+    store.insert_execution_intent(&failed_intent).await.unwrap();
+    store
+        .update_execution_intent_status(
+            &failed_intent.execution_id,
+            ExecutionIntentStatus::FinalizationFailed,
+            Some("late persistence failure"),
+        )
+        .await
+        .unwrap();
+
+    let failed_row: (String, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as(
+            "select status, finalization_error, finalized_at from execution_intents where execution_id = $1",
+        )
+        .bind(&failed_intent.execution_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(failed_row.0, "finalization_failed");
+    assert_eq!(failed_row.1.as_deref(), Some("late persistence failure"));
+    assert!(failed_row.2.is_none());
+
     let update_after_finalize = store
         .update_execution_intent_status(
             &intent.execution_id,
