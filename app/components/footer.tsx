@@ -17,9 +17,9 @@ export function Footer() {
       <ul className="flex list-none flex-wrap gap-x-6 gap-y-3">
         {[
           { label: "Overview", href: "#" },
+          { label: "Docs", href: "/docs" },
           { label: "Privacy", href: "#" },
           { label: "System Status", href: "#" },
-          { label: "Contact", href: "mailto:nyashahama45@gmail.com" },
         ].map((link) => (
           <li key={link.label}>
             <a
@@ -30,6 +30,11 @@ export function Footer() {
             </a>
           </li>
         ))}
+        <li>
+          <span className="font-mono text-[11px] text-white/28 tracking-[0.08em]">
+            support@guardrail
+          </span>
+        </li>
       </ul>
 
       <span className="font-mono text-[10px] text-white/20 md:text-right">

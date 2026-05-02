@@ -1,4 +1,6 @@
 export function Hero() {
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "#";
+
   return (
     <section className="relative z-[1] min-h-[100svh] flex items-center">
       <div
@@ -35,7 +37,7 @@ export function Hero() {
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 sm:gap-4">
             <a
-              href="mailto:nyashahama45@gmail.com?subject=Pilot Request"
+              href={calendarUrl}
               className="font-mono text-[12px] font-bold tracking-[0.1em] uppercase text-black bg-white px-7 py-3.5 no-underline inline-flex items-center justify-center gap-2.5 hover:bg-cyan transition-all duration-300"
               style={{ ["--tw-shadow" as string]: "none" }}
               onMouseEnter={(e) => {
@@ -46,7 +48,7 @@ export function Hero() {
                 (e.currentTarget as HTMLElement).style.boxShadow = "none";
               }}
             >
-              Request Pilot Access
+              Book Pilot Intro
               <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 17L17 7M17 7H7M17 7v10" />
               </svg>

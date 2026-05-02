@@ -1,6 +1,8 @@
 "use client";
 
 export function Nav() {
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "#";
+
   return (
     <nav
       className="fixed left-0 right-0 top-0 z-50 flex h-[64px] items-center justify-between border-b border-white/[0.08] bg-background/80 px-4 backdrop-blur-md sm:h-[68px] sm:px-6 md:border-none md:bg-transparent md:backdrop-blur-none md:mix-blend-difference lg:px-12"
@@ -23,6 +25,7 @@ export function Nav() {
             { label: "How It Works", href: "#how" },
             { label: "Features", href: "#features" },
             { label: "Pricing", href: "#pricing" },
+            { label: "Docs", href: "/docs" },
           ].map((link) => (
             <li key={link.href}>
               <a
@@ -35,11 +38,11 @@ export function Nav() {
           ))}
         </ul>
         <a
-          href="mailto:nyashahama45@gmail.com"
-          className="border border-white/20 px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] text-white uppercase no-underline transition-all duration-300 hover:bg-white hover:text-black sm:px-5 sm:py-2.5 sm:text-[11px]"
+          href={calendarUrl}
+          className="border border-white/20 px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] text-white/55 uppercase no-underline transition-all duration-300 hover:text-white sm:px-5 sm:py-2.5 sm:text-[11px]"
         >
-          <span className="sm:hidden">Access</span>
-          <span className="hidden sm:inline">Get Access</span>
+          <span className="sm:hidden">Book</span>
+          <span className="hidden sm:inline">Book Intro</span>
         </a>
       </div>
     </nav>
