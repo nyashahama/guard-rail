@@ -1,0 +1,9 @@
+policies:
+  - name: payload-size-limit
+    description: Block oversized request bodies.
+    rules:
+      - field: "$"
+        condition: size_exceeds
+        max_bytes: 102400
+        action: block
+        severity: warning

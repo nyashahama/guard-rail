@@ -37,6 +37,19 @@ Use these repo-native docs for the supported operator workflows:
 - Observability: `guard-rail-engine/deploy/observability/`
 - Verification: `guard-rail-engine/deploy/verification/README.md`
 
+## Pilot onboarding docs
+
+If you are integrating or operating Guard Rail for the first time, use:
+- `guard-rail-engine/deploy/onboarding/README.md`
+- `guard-rail-engine/deploy/onboarding/quickstart.md`
+- `guard-rail-engine/deploy/onboarding/api-reference.md`
+- `guard-rail-engine/deploy/onboarding/policy-cookbook.md`
+- `guard-rail-engine/deploy/onboarding/docker-pilot-guide.md`
+- `guard-rail-engine/deploy/onboarding/webhooks-guide.md`
+- `guard-rail-engine/deploy/onboarding/scripted-demo.md`
+
+This repository is intentionally pilot-focused. Onboarding and API guidance describe the implemented runtime posture, not a full SaaS management platform.
+
 ## Current scope
 
 Guard Rail is focused on the runtime and its pilot deployment story. It is intentionally not framed here as a full SaaS platform, management console, or multi-environment control plane.

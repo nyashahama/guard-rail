@@ -1,0 +1,14 @@
+policies:
+  - name: sa-id-pii-block
+    description: Block South African identity number patterns in payloads.
+    rules:
+      - field: "$.id_number"
+        condition: regex_match
+        pattern: "\\b\\d{2}(0[1-9]|1[0-2])\\d{6}\\b"
+        action: block
+        severity: critical
+      - field: "$.customer.id_number"
+        condition: regex_match
+        pattern: "\\b\\d{2}(0[1-9]|1[0-2])\\d{6}\\b"
+        action: block
+        severity: critical

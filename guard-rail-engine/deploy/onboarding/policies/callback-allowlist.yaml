@@ -1,0 +1,11 @@
+policies:
+  - name: callback-allowlist
+    description: Block callback URLs not in approved domains.
+    rules:
+      - field: "$.callback"
+        condition: domain_not_in
+        values:
+          - "*.safe.com"
+          - "*.internal.bank.za"
+        action: block
+        severity: critical
