@@ -1,5 +1,5 @@
 export function Hero() {
-  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "#";
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "/#pilot-lead-form";
 
   return (
     <section className="relative z-[1] min-h-[100svh] flex items-center">

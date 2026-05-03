@@ -1,11 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef } from "react";
 import { LeadForm } from "./lead-form";
 
 export function Pricing() {
   const ref = useRef<HTMLDivElement>(null);
-  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "#";
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "/#pilot-lead-form";
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -157,12 +158,12 @@ export function Pricing() {
                   </li>
                 ))}
               </ul>
-              <a
+              <Link
                 href="/docs"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
                 See Integration Guide
-              </a>
+              </Link>
             </div>
           </div>
         </div>
@@ -214,24 +215,24 @@ export function Pricing() {
                   </svg>
                 </a>
                 <div className="flex flex-wrap gap-3">
-                  <a
-                    href="/docs"
-                    className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
-                  >
-                    Read Docs
-                  </a>
-                  <a
-                    href="/docs#pilot-setup"
-                    className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
-                  >
-                    Pilot Setup Guide
-                  </a>
-                  <a
-                    href="/docs#integration"
-                    className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
-                  >
-                    Policy Integration
-                  </a>
+                <Link
+                  href="/docs"
+                  className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                >
+                  Read Docs
+                </Link>
+                <Link
+                  href="/docs/quickstart"
+                  className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                >
+                  Pilot Setup Guide
+                </Link>
+                <Link
+                  href="/docs/webhooks-guide"
+                  className="font-mono text-[11px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-6 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                >
+                  Policy Integration
+                </Link>
                 </div>
               </div>
             </div>

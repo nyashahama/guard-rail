@@ -1,22 +1,24 @@
 "use client";
 
+import Link from "next/link";
+
 export function Nav() {
-  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "#";
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL || "/#pilot-lead-form";
 
   return (
     <nav
       className="fixed left-0 right-0 top-0 z-50 flex h-[64px] items-center justify-between border-b border-white/[0.08] bg-background/80 px-4 backdrop-blur-md sm:h-[68px] sm:px-6 md:border-none md:bg-transparent md:backdrop-blur-none md:mix-blend-difference lg:px-12"
     >
       {/* Logo */}
-      <a
-        href="#"
+      <Link
+        href="/"
         className="flex items-center gap-2 font-sans text-[12px] font-bold tracking-[0.15em] text-white uppercase no-underline sm:gap-2.5 sm:text-[13px]"
       >
         <div className="w-[26px] h-[26px] border-2 border-cyan flex items-center justify-center rounded-[4px]">
           <div className="w-2 h-2 bg-cyan" />
         </div>
         Guard Rail
-      </a>
+      </Link>
 
       {/* Right side */}
       <div className="flex min-w-0 items-center gap-3 sm:gap-4 lg:gap-8">
