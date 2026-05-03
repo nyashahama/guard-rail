@@ -74,6 +74,8 @@ export function LeadForm() {
       const payload = (await response.json().catch(() => ({}))) as {
         request_id?: string;
         error?: string;
+        warning?: string;
+        delivered_via?: string;
       };
 
       if (!response.ok) {
@@ -81,7 +83,15 @@ export function LeadForm() {
       }
 
       setRequestId(payload.request_id || "submitted");
-      setStatusMessage("Pilot brief received. We will reply from our onboarding desk.");
+      const statusLine =
+        payload.warning ??
+        "Pilot brief received. We will reply from our onboarding desk.";
+
+      setStatusMessage(
+        payload.delivered_via === "fallback"
+          ? `Pilot brief captured for onboarding review. ${statusLine}`
+          : statusLine
+      );
       setFormData(initialFormState);
     } catch (error: unknown) {
       setErrorMessage(
