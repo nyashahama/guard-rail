@@ -12,7 +12,7 @@ export GUARDRAIL_DATABASE__URL="${GUARDRAIL_DATABASE__URL:-postgres://guardrail:
 export GUARDRAIL_ADMIN__TOKEN="${GUARDRAIL_ADMIN__TOKEN:-demo-admin-token}"
 export GUARDRAIL_ENVIRONMENT=development
 
-TMP_DIR="$ROOT_DIR/../tmp/pilot-demo"
+TMP_DIR="${GUARDRAIL_DEMO_TMP_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/guardrail-pilot-demo.XXXXXX")}"
 mkdir -p "$TMP_DIR"
 
 cleanup() {
@@ -85,12 +85,17 @@ curl -fsS -X POST "http://127.0.0.1:18081/v1/admin/tenants/${TENANT_ID}/routes" 
   -H "content-type: application/json" \
   -d '{"route_id":"pilot-webhook"}' >/dev/null
 
-curl -sS -D "$TMP_DIR/allowed.headers" \
-  -X POST http://127.0.0.1:18080/v1/execute/pilot-webhook \
-  -H "authorization: Bearer ${TENANT_KEY}" \
-  -H "content-type: application/json" \
-  -d @examples/pilot-demo/payloads/allowed.json \
-  > "$TMP_DIR/allowed.response.json"
+ALLOWED_STATUS=$(
+  curl -sS -D "$TMP_DIR/allowed.headers" \
+    -o "$TMP_DIR/allowed.response.json" \
+    -w "%{http_code}" \
+    -X POST http://127.0.0.1:18080/v1/execute/pilot-webhook \
+    -H "authorization: Bearer ${TENANT_KEY}" \
+    -H "content-type: application/json" \
+    -d @examples/pilot-demo/payloads/allowed.json
+)
+
+test "$ALLOWED_STATUS" = "200"
 
 ALLOWED_ID=$(awk 'tolower($1)=="x-guardrail-execution-id:" {print $2}' "$TMP_DIR/allowed.headers" | tr -d '\r')
 test -n "$ALLOWED_ID"
