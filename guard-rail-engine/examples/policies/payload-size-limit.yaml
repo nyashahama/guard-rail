@@ -1,0 +1,9 @@
+policies:
+  - name: payload-size-limit
+    description: Block payloads larger than 100 KiB
+    rules:
+      - field: "$"
+        condition: size_exceeds
+        max_bytes: 102400
+        action: block
+        severity: warning

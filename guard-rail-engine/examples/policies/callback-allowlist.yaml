@@ -1,0 +1,9 @@
+policies:
+  - name: callback-allowlist
+    description: Block callback URLs outside approved domains
+    rules:
+      - field: "$.callback"
+        condition: domain_not_in
+        values: ["*.safe.example", "hooks.internal.example"]
+        action: block
+        severity: critical

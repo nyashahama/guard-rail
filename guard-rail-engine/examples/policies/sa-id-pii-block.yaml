@@ -1,0 +1,9 @@
+policies:
+  - name: sa-id-pii-block
+    description: Block South African ID numbers in nested value fields
+    rules:
+      - field: "$..*.value"
+        condition: regex_match
+        pattern: "\\b\\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\\d|3[01])\\d{4}[01]\\d{2}\\b"
+        action: block
+        severity: critical
