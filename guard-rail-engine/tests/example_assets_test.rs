@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
-use guard_rail_engine::policy::{
-    PolicySet,
-    engine::{Verdict, evaluate},
+use guard_rail_engine::{
+    policy::{
+        PolicySet,
+        engine::{Verdict, evaluate},
+    },
+    routes::RouteTable,
 };
 use serde_json::json;
 
@@ -131,4 +134,16 @@ fn payload_size_limit_allows_small_payload_and_blocks_oversized_payload() {
         evaluate_sample_policy(&policies, "payload-size-limit", &payload, 102_401),
         "payload-size-limit",
     );
+}
+
+#[test]
+fn pilot_demo_routes_reference_existing_policies() {
+    let routes = RouteTable::load(&manifest_path("examples/pilot-demo/routes.yaml"))
+        .expect("pilot demo routes should load");
+    let policies = PolicySet::load_dir(&manifest_path("examples/pilot-demo/policies"))
+        .expect("pilot demo policies should load");
+
+    policies
+        .validate_references(&routes.policy_names())
+        .expect("pilot demo routes should only reference existing policies");
 }

@@ -1,0 +1,18 @@
+policies:
+  - name: callback-allowlist
+    description: Block callback URLs outside approved domains
+    rules:
+      - field: "$.callback"
+        condition: domain_not_in
+        values: ["*.safe.example", "hooks.internal.example"]
+        action: block
+        severity: critical
+
+  - name: payload-size-limit
+    description: Block payloads larger than 100 KiB
+    rules:
+      - field: "$"
+        condition: size_exceeds
+        max_bytes: 102400
+        action: block
+        severity: warning

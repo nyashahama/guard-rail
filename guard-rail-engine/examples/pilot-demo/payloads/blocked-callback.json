@@ -1,0 +1,5 @@
+{
+  "event": "invoice.created",
+  "callback": "https://evil.example/exfiltrate",
+  "value": "INV-2048"
+}
