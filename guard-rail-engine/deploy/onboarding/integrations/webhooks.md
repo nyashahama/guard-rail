@@ -12,13 +12,16 @@ The upstream payload shape does not need to change. The main change is the webho
 
 ## Common Setup
 
-1. Create a route in `routes.yaml`.
-2. Attach policies to the route.
-3. Create a tenant.
-4. Issue a tenant API key.
-5. Bind the route to the tenant.
-6. Replace the webhook URL in the client with the Guard Rail execute URL.
-7. Add `authorization: Bearer <tenant-api-key>`.
+1. Create a route in `routes.yaml` with `auth_mode: tenant_bound`.
+2. Set the route `upstream` to the original webhook or API URL the client used before Guard Rail.
+3. Attach policies to the route.
+4. Create a tenant.
+5. Issue a tenant API key.
+6. Bind the route to the tenant.
+7. Replace the webhook URL in the client with the Guard Rail execute URL.
+8. Add `authorization: Bearer <tenant-api-key>` for Guard Rail.
+
+The `authorization` header authenticates the client to Guard Rail. The runtime strips `Authorization` before forwarding upstream so tenant API keys do not leak. If the upstream also needs auth, do not rely on the same incoming `Authorization` header; configure upstream auth outside this guide or use a different upstream-supported mechanism.
 
 ## Zapier
 
@@ -75,9 +78,9 @@ curl -i -X POST https://guardrail.example.com/v1/execute/pilot-webhook \
 
 ## Blocked Responses
 
-A blocked policy returns `403` and does not forward to upstream.
+A policy block returns `403` and does not forward when audit persistence succeeds. If strict audit persistence fails, the runtime can return `503`.
 
-The response includes an execution id header:
+For evaluated execution attempts where the runtime creates and persists an execution record, the response includes an execution id header:
 
 ```text
 x-guardrail-execution-id: <execution-id>
