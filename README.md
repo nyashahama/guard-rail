@@ -33,17 +33,17 @@ The engine currently covers the pilot-grade request flow:
 ## Docs
 
 Start here for pilot onboarding:
-- Pilot onboarding: `guard-rail-engine/deploy/onboarding/README.md`
-- Quickstart: `guard-rail-engine/deploy/onboarding/quickstart.md`
-- API reference: `guard-rail-engine/deploy/onboarding/api-reference.md`
-- Policy cookbook: `guard-rail-engine/deploy/onboarding/policy-cookbook.md`
-- Docker pilot guide: `guard-rail-engine/deploy/onboarding/docker-pilot-guide.md`
-- Webhook integrations: `guard-rail-engine/deploy/onboarding/integrations/webhooks.md`
+- Pilot onboarding: [guard-rail-engine/deploy/onboarding/README.md](guard-rail-engine/deploy/onboarding/README.md)
+- Quickstart: [guard-rail-engine/deploy/onboarding/quickstart.md](guard-rail-engine/deploy/onboarding/quickstart.md)
+- API reference: [guard-rail-engine/deploy/onboarding/api-reference.md](guard-rail-engine/deploy/onboarding/api-reference.md)
+- Policy cookbook: [guard-rail-engine/deploy/onboarding/policy-cookbook.md](guard-rail-engine/deploy/onboarding/policy-cookbook.md)
+- Docker pilot guide: [guard-rail-engine/deploy/onboarding/docker-pilot-guide.md](guard-rail-engine/deploy/onboarding/docker-pilot-guide.md)
+- Webhook integrations: [guard-rail-engine/deploy/onboarding/integrations/webhooks.md](guard-rail-engine/deploy/onboarding/integrations/webhooks.md)
 
 Use these repo-native docs for supported operator workflows:
-- Data operations: `guard-rail-engine/deploy/container/DATA_OPERATIONS.md`
-- Observability: `guard-rail-engine/deploy/observability/`
-- Verification: `guard-rail-engine/deploy/verification/README.md`
+- Data operations: [guard-rail-engine/deploy/container/DATA_OPERATIONS.md](guard-rail-engine/deploy/container/DATA_OPERATIONS.md)
+- Observability: [guard-rail-engine/deploy/observability/](guard-rail-engine/deploy/observability/)
+- Verification: [guard-rail-engine/deploy/verification/README.md](guard-rail-engine/deploy/verification/README.md)
 
 ## Current scope
 
