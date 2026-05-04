@@ -5,7 +5,7 @@ import { LeadForm } from "./lead-form";
 
 export function Pricing() {
   const ref = useRef<HTMLDivElement>(null);
-  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL ?? "#pilot-contact";
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL;
   const docsUrl =
     process.env.NEXT_PUBLIC_DOCS_URL ??
     "https://github.com/nyashahama/guard-rail/tree/main/guard-rail-engine/deploy/onboarding";
@@ -209,12 +209,14 @@ export function Pricing() {
             <div className="grid gap-5">
               <LeadForm />
               <div className="flex flex-wrap gap-3">
-                <a
-                  href={calendarUrl}
-                  className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
-                >
-                  Book Calendar
-                </a>
+                {calendarUrl ? (
+                  <a
+                    href={calendarUrl}
+                    className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                  >
+                    Book Calendar
+                  </a>
+                ) : null}
                 <a
                   href={docsUrl}
                   className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"

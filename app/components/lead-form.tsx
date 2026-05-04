@@ -109,11 +109,13 @@ export function LeadForm() {
         {status === "submitting" ? "Sending" : "Request Pilot"}
       </button>
       {status === "sent" ? (
-        <p className="font-mono text-[11px] text-cyan">Pilot request received.</p>
+        <p role="status" className="font-mono text-[11px] text-cyan">
+          Pilot request received.
+        </p>
       ) : null}
       {status === "error" ? (
-        <p className="font-mono text-[11px] text-red-300">
-          Pilot request could not be sent. Use the calendar link instead.
+        <p role="alert" className="font-mono text-[11px] text-red-300">
+          Pilot request could not be sent. Use the pilot docs link below.
         </p>
       ) : null}
     </form>
