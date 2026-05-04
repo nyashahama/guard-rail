@@ -1,3 +1,8 @@
+const docsUrl =
+  process.env.NEXT_PUBLIC_DOCS_URL ??
+  "https://github.com/nyashahama/guard-rail/tree/main/guard-rail-engine/deploy/onboarding";
+const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL;
+
 export function Footer() {
   return (
     <footer
@@ -17,9 +22,9 @@ export function Footer() {
       <ul className="flex list-none flex-wrap gap-x-6 gap-y-3">
         {[
           { label: "Overview", href: "#" },
-          { label: "Privacy", href: "#" },
-          { label: "System Status", href: "#" },
-          { label: "Contact", href: "mailto:nyashahama45@gmail.com" },
+          { label: "Docs", href: docsUrl },
+          ...(calendarUrl ? [{ label: "Calendar", href: calendarUrl }] : []),
+          { label: "Contact", href: "#pilot-contact" },
         ].map((link) => (
           <li key={link.label}>
             <a
