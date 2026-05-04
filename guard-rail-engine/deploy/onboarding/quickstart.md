@@ -10,6 +10,8 @@ This quickstart proves the pilot flow with one protected route:
 - fetch audit evidence
 - run replay
 
+This quickstart uses the `guard-rail-engine/examples/pilot-demo/` config, payloads, and upstream server that are part of the Phase 3 onboarding examples.
+
 ## Prerequisites
 
 - Docker
@@ -30,10 +32,15 @@ export GUARDRAIL_SERVER__PORT=18080
 
 Use development mode for this local quickstart so the sample upstream can run on `http://127.0.0.1`.
 
-## Migrate
+From the repository root, enter the engine directory once. Run the remaining commands from this directory; start separate terminals in this directory too.
 
 ```bash
 cd guard-rail-engine
+```
+
+## Migrate
+
+```bash
 cargo run -- migrate --config ./config/config.yaml
 ```
 
@@ -43,10 +50,19 @@ Expected output:
 Migrations applied successfully
 ```
 
+## Start The Local Upstream
+
+In a separate terminal that is also in `guard-rail-engine`, start the pilot demo upstream:
+
+```bash
+python3 examples/pilot-demo/upstream.py
+```
+
+The upstream listens on `127.0.0.1:19090`. The `pilot-webhook` route forwards allowed requests to this local service.
+
 ## Start The Runtime
 
 ```bash
-cd guard-rail-engine
 cargo run -- serve --config ./examples/pilot-demo/config.yaml
 ```
 
