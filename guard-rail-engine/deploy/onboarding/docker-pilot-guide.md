@@ -24,6 +24,8 @@ Use the repo samples in `guard-rail-engine/deploy/container/` as the starting po
 
 ## Required Environment
 
+Do not run with the placeholder environment example as-is. Replace placeholders with real values and pass those values explicitly into the container.
+
 ```bash
 export GUARDRAIL_DATABASE__URL=postgres://guardrail:<password>@postgres.internal:5432/guardrail
 export GUARDRAIL_ADMIN__TOKEN=<set-a-real-admin-token>
@@ -47,7 +49,11 @@ Production validation requires:
 ```bash
 docker run --rm \
   -v "$PWD/guard-rail-engine/deploy/container:/etc/guard-rail-engine:ro" \
-  --env-file ./guard-rail-engine/deploy/container/guard-rail-engine.env.example \
+  --env GUARDRAIL_DATABASE__URL \
+  --env GUARDRAIL_ADMIN__TOKEN \
+  --env GUARDRAIL_ENVIRONMENT \
+  --env GUARDRAIL_SERVER__HOST \
+  --env GUARDRAIL_SERVER__PORT \
   guard-rail-engine \
   migrate --config /etc/guard-rail-engine/config.yaml
 ```
@@ -56,21 +62,27 @@ docker run --rm \
 
 ```bash
 docker run --rm \
+  --name guard-rail-engine \
   -p 8080:8080 \
-  -p 127.0.0.1:8081:8081 \
   -v "$PWD/guard-rail-engine/deploy/container:/etc/guard-rail-engine:ro" \
-  --env-file ./guard-rail-engine/deploy/container/guard-rail-engine.env.example \
+  --env GUARDRAIL_DATABASE__URL \
+  --env GUARDRAIL_ADMIN__TOKEN \
+  --env GUARDRAIL_ENVIRONMENT \
+  --env GUARDRAIL_SERVER__HOST \
+  --env GUARDRAIL_SERVER__PORT \
   guard-rail-engine \
   serve --config /etc/guard-rail-engine/config.yaml
 ```
 
-Place a reverse proxy or load balancer in front of the main listener. Keep the admin listener on loopback or a private operator network.
+Place a reverse proxy or load balancer in front of the main listener. Keep the admin listener on loopback or a private operator network. With the sample config, the admin listener binds to `127.0.0.1` inside the container, so it is intentionally not published to the host.
 
 ## Verify
 
 ```bash
 curl -i http://127.0.0.1:8080/ready
 curl -sS http://127.0.0.1:8080/metrics
+docker exec guard-rail-engine curl -sS http://127.0.0.1:8081/v1/admin/tenants \
+  -H "authorization: Bearer ${GUARDRAIL_ADMIN__TOKEN}"
 ```
 
 Run the Phase 7 verification suite before pilot traffic:

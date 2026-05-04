@@ -46,6 +46,8 @@ Important response header:
 x-guardrail-execution-id: <execution-id>
 ```
 
+This header is present for evaluated execution attempts where the runtime creates an execution record and returns a Guard Rail response or an upstream response. Some early runtime rejections, such as unknown route, body-limit, or authentication failures, may not include it.
+
 Common statuses:
 
 | Status | Meaning |
@@ -67,6 +69,8 @@ Common statuses:
 GET /v1/audit/executions
 ```
 
+Audit list, get, and replay endpoints are mounted on the main listener behind tenant-key authentication. Tenant-key callers are scoped to their own tenant. For audit APIs, the admin listener currently exposes audit integrity only, not admin audit browsing.
+
 ```bash
 curl -sS "${GUARDRAIL_URL}/v1/audit/executions?route_id=pilot-webhook&limit=20" \
   -H "authorization: Bearer ${GUARDRAIL_TENANT_KEY}" \
@@ -77,7 +81,7 @@ Supported filters:
 
 | Query | Description |
 | --- | --- |
-| `tenant_id` | Admin-only tenant filter. Tenant callers are scoped to their tenant. |
+| `tenant_id` | Reserved for admin-scoped audit access; tenant-key callers are always scoped to their own tenant in the current pilot runtime. |
 | `route_id` | Route id filter. |
 | `verdict` | Verdict filter, such as `ALLOWED` or `BLOCKED`. |
 | `from` | RFC3339 lower timestamp bound. |
@@ -133,10 +137,10 @@ curl -sS "${GUARDRAIL_URL}/v1/replay/executions/${EXECUTION_ID}" \
 ```bash
 curl -i "${GUARDRAIL_URL}/health"
 curl -i "${GUARDRAIL_URL}/ready"
-curl -sS "${GUARDRAIL_URL}/metrics"
+curl -sS "${GUARDRAIL_URL}${GUARDRAIL_METRICS_PATH:-/metrics}"
 ```
 
-`/health` confirms the process is reachable. `/ready` confirms the runtime is ready to serve traffic. `/metrics` is available when `observability.metrics_enabled` is `true`.
+`/health` confirms the process is reachable. `/ready` confirms the runtime is ready to serve traffic. Metrics are mounted only when `observability.metrics_enabled` is `true`; the path is configured by `observability.metrics_path` and defaults to `/metrics`.
 
 ## Admin: Create Tenant
 
