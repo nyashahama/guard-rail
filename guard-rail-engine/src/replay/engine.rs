@@ -18,7 +18,7 @@ pub enum ReplayPolicySource {
 }
 
 pub struct ReplayRunParams {
-    pub id: String,
+    pub id: uuid::Uuid,
     pub execution_id: String,
     pub policy_source: String,
     pub evaluated_snapshot_hash: String,
@@ -198,7 +198,7 @@ async fn persist_replay_run(
     };
 
     let params = ReplayRunParams {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: uuid::Uuid::new_v4(),
         execution_id: result.execution_id.clone(),
         policy_source: policy_source_str.to_string(),
         evaluated_snapshot_hash: result.evaluated_snapshot_hash.clone(),
