@@ -23,13 +23,19 @@ function isEmail(value: string): boolean {
 }
 
 export async function POST(request: Request) {
-  let body: LeadPayload;
+  let parsed: unknown;
 
   try {
-    body = (await request.json()) as LeadPayload;
+    parsed = await request.json();
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return NextResponse.json({ error: "invalid_lead" }, { status: 400 });
+  }
+
+  const body = parsed as LeadPayload;
 
   const name = cleanString(body.name, 120);
   const email = cleanString(body.email, 180);

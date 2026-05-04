@@ -11,7 +11,8 @@ export function LeadForm() {
     event.preventDefault();
     setStatus("submitting");
 
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const response = await fetch("/api/leads", {
         method: "POST",
@@ -28,7 +29,7 @@ export function LeadForm() {
 
       setStatus(response.ok ? "sent" : "error");
       if (response.ok) {
-        event.currentTarget.reset();
+        formElement.reset();
       }
     } catch {
       setStatus("error");
