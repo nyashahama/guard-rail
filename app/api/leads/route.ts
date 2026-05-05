@@ -57,8 +57,8 @@ export async function POST(request: Request) {
     "content-type": "application/json",
   };
 
-  if (process.env.LEAD_WEBHOOK_SECRET) {
-    headers["x-guardrail-lead-secret"] = process.env.LEAD_WEBHOOK_SECRET;
+  if (process.env.LEAD_WEBHOOK_TOKEN) {
+    headers["x-guardrail-lead-secret"] = process.env.LEAD_WEBHOOK_TOKEN;
   }
 
   let response: Response;
