@@ -873,7 +873,7 @@ impl PostgresAuditStore {
                 ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 "#,
             )
-            .bind(&params.id)
+            .bind(params.id)
             .bind(&params.execution_id)
             .bind(&params.policy_source)
             .bind(&params.evaluated_snapshot_hash)
