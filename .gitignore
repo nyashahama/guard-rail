@@ -54,5 +54,5 @@ OVERVIEW.md
 .worktrees/
 worktrees/
 
-# superpowers (agent-generated)
-docs/superpowers/
+# Local docs (agent-generated / local working notes)
+docs/
