@@ -1,5 +1,7 @@
 "use client";
 
+const docsUrl = "/guard-rail-engine/deploy/onboarding/";
+
 export function Nav() {
   return (
     <nav
@@ -23,6 +25,7 @@ export function Nav() {
             { label: "How It Works", href: "#how" },
             { label: "Features", href: "#features" },
             { label: "Pricing", href: "#pricing" },
+            { label: "Docs", href: docsUrl },
           ].map((link) => (
             <li key={link.href}>
               <a
@@ -35,7 +38,7 @@ export function Nav() {
           ))}
         </ul>
         <a
-          href="mailto:nyashahama45@gmail.com"
+          href="#pilot-contact"
           className="border border-white/20 px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] text-white uppercase no-underline transition-all duration-300 hover:bg-white hover:text-black sm:px-5 sm:py-2.5 sm:text-[11px]"
         >
           <span className="sm:hidden">Access</span>

@@ -1,0 +1,7 @@
+routes:
+  - id: pilot-webhook
+    auth_mode: tenant_bound
+    upstream: http://127.0.0.1:19090/webhook
+    methods: [POST]
+    policies: [callback-allowlist, payload-size-limit]
+    timeout_ms: 3000

@@ -1,9 +1,14 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { LeadForm } from "./lead-form";
 
 export function Pricing() {
   const ref = useRef<HTMLDivElement>(null);
+  const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL;
+  const docsUrl =
+    process.env.NEXT_PUBLIC_DOCS_URL ??
+    "https://github.com/nyashahama/guard-rail/tree/main/guard-rail-engine/deploy/onboarding";
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -71,7 +76,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:nyashahama45@gmail.com?subject=POV Pilot"
+                href="#pilot-contact"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
                 Start Pilot
@@ -124,7 +129,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:nyashahama45@gmail.com?subject=Enterprise"
+                href="#pilot-contact"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 bg-white text-black hover:bg-cyan"
                 onMouseEnter={(e) =>
                   ((e.currentTarget as HTMLElement).style.boxShadow =
@@ -161,7 +166,7 @@ export function Pricing() {
                 ))}
               </ul>
               <a
-                href="mailto:nyashahama45@gmail.com?subject=OEM"
+                href="#pilot-contact"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
                 Talk to us
@@ -188,7 +193,7 @@ export function Pricing() {
           }}
         />
         <div className="px-20 py-[120px] max-w-[1400px] mx-auto relative">
-          <div className="grid gap-20 items-center" style={{ gridTemplateColumns: "1fr auto" }}>
+          <div className="grid gap-14 items-start lg:grid-cols-2">
             <div>
               <h2
                 className="font-extrabold tracking-[-0.025em] leading-[1.05] mb-4"
@@ -201,32 +206,24 @@ export function Pricing() {
                 No agents. No infrastructure overhaul.
               </p>
             </div>
-            <div className="flex flex-col gap-3 items-start flex-shrink-0">
-              <a
-                href="mailto:nyashahama45@gmail.com?subject=Pilot Request"
-                className="font-mono text-[12px] font-bold tracking-[0.1em] uppercase text-black bg-white px-7 py-3.5 no-underline inline-flex items-center gap-2.5 transition-all duration-300 hover:bg-cyan"
-                onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLElement).style.boxShadow =
-                    "0 0 32px rgba(0,240,255,0.3)")
-                }
-                onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLElement).style.boxShadow = "none")
-                }
-              >
-                Contact Founders
-                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 17L17 7M17 7H7M17 7v10" />
-                </svg>
-              </a>
-              <a
-                href="#"
-                className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/50 border border-white/15 px-7 py-3.5 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
-              >
-                Request Data Room
-              </a>
-              <span className="font-mono text-[10px] tracking-[0.1em] text-white/25 mt-1">
-                nyashahama45@gmail.com
-              </span>
+            <div className="grid gap-5">
+              <LeadForm />
+              <div className="flex flex-wrap gap-3">
+                {calendarUrl ? (
+                  <a
+                    href={calendarUrl}
+                    className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                  >
+                    Book Calendar
+                  </a>
+                ) : null}
+                <a
+                  href={docsUrl}
+                  className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
+                >
+                  Pilot Docs
+                </a>
+              </div>
             </div>
           </div>
         </div>

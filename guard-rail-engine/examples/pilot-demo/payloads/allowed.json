@@ -1,0 +1,5 @@
+{
+  "event": "invoice.created",
+  "callback": "https://api.safe.example/hooks/invoice",
+  "value": "INV-2048"
+}

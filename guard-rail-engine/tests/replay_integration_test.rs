@@ -1,6 +1,7 @@
 use guard_rail_engine::config::ReplayConfig;
 use guard_rail_engine::policy::{Policy, PolicySet};
 use guard_rail_engine::proxy::AppState;
+use guard_rail_engine::replay::engine::{ReplayPolicySource, replay_execution};
 use guard_rail_engine::replay::snapshot::{build_snapshot, build_snapshot_from_set};
 use guard_rail_engine::routes::{Route, RouteAuthMode};
 use guard_rail_engine::storage::postgres::PostgresAuditStore;
@@ -404,6 +405,52 @@ async fn test_allowed_execution_persists_response_artifacts_and_strips_authoriza
             .and_then(|value| value.as_str()),
         Some("[REDACTED]")
     );
+}
+
+#[tokio::test]
+async fn test_replay_execution_persists_allowed_replay_run() {
+    let harness = start_stage4_test_app().await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/execute/open-route", harness.base_url))
+        .header("authorization", format!("Bearer {}", harness.tenant_key))
+        .header("content-type", "application/json")
+        .body(r#"{"ok":true}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let execution_id = response.headers()["x-guardrail-execution-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let result = replay_execution(&harness.state, &execution_id, ReplayPolicySource::Snapshot)
+        .await
+        .expect("replay execution should succeed");
+
+    assert_eq!(result.original_verdict, "ALLOWED");
+    assert_eq!(result.replay_verdict, "ALLOWED");
+    assert!(!result.verdict_changed);
+
+    let database_url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL must be set");
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&database_url)
+        .await
+        .unwrap();
+
+    let replay_run_count: i64 =
+        sqlx::query_scalar("select count(*) from replay_runs where execution_id = $1")
+            .bind(&execution_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    assert_eq!(replay_run_count, 1);
 }
 
 #[tokio::test]
