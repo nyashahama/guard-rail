@@ -1,6 +1,4 @@
-const docsUrl =
-  process.env.NEXT_PUBLIC_DOCS_URL ??
-  "https://github.com/nyashahama/guard-rail/tree/main/guard-rail-engine/deploy/onboarding";
+const docsUrl = "/guard-rail-engine/deploy/onboarding/";
 const calendarUrl = process.env.NEXT_PUBLIC_CALENDAR_URL;
 
 export function Footer() {
