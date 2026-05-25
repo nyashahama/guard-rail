@@ -79,7 +79,7 @@ fn default_timeout() -> u64 {
 }
 
 fn default_user_agent() -> String {
-    "GuardRail/0.1.0".to_string()
+    "GuardRail/0.2.0-beta.1".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -591,7 +591,7 @@ rate_limit: {}
         let config = AppConfig::load(tmp.path()).unwrap();
         assert_eq!(config.server.request_body_limit_bytes, 1_048_576);
         assert_eq!(config.forwarding.default_timeout_ms, 5000);
-        assert_eq!(config.forwarding.user_agent, "GuardRail/0.1.0");
+        assert_eq!(config.forwarding.user_agent, "GuardRail/0.2.0-beta.1");
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.logging.format, "json");
         assert_eq!(config.database.max_connections, 10);
