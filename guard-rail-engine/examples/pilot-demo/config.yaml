@@ -9,7 +9,7 @@ policies_dir: "./examples/pilot-demo/policies/"
 
 forwarding:
   default_timeout_ms: 3000
-  user_agent: "GuardRailDemo/0.1.0"
+  user_agent: "GuardRailDemo/0.2.0-beta.1"
 
 logging:
   level: "info"

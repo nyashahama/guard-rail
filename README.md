@@ -1,14 +1,14 @@
 # Guard Rail
 
-Guard Rail is a policy enforcement runtime for internal API traffic. It sits between trusted clients and upstream APIs, evaluates requests against route and policy definitions, and either forwards the request or blocks it with an auditable verdict.
+Guard Rail is a beta policy enforcement runtime for internal API traffic. It sits between trusted clients and upstream APIs, evaluates requests against route and policy definitions, and either forwards the request or blocks it with an auditable verdict.
 
 The repo has two user-facing parts:
 - `guard-rail-engine/` for the Rust runtime
 - `app/` for the marketing site, which is separate from the runtime
 
-## Blessed deployment path
+## Blessed beta deployment path
 
-The supported pilot deployment is:
+The supported beta deployment is:
 
 `container image + external Postgres + reverse proxy/LB`
 
@@ -22,7 +22,7 @@ The runtime is not positioned as a standalone VM install, a Docker Compose produ
 
 ## What the runtime does
 
-The engine currently covers the pilot-grade request flow:
+The engine currently covers the beta runtime request flow:
 - route lookup and method checks
 - request authentication and authorization surfaces
 - policy evaluation before forwarding
@@ -32,7 +32,7 @@ The engine currently covers the pilot-grade request flow:
 
 ## Docs
 
-Start here for pilot onboarding:
+Start here for beta onboarding:
 - Pilot onboarding: [guard-rail-engine/deploy/onboarding/README.md](guard-rail-engine/deploy/onboarding/README.md)
 - Quickstart: [guard-rail-engine/deploy/onboarding/quickstart.md](guard-rail-engine/deploy/onboarding/quickstart.md)
 - API reference: [guard-rail-engine/deploy/onboarding/api-reference.md](guard-rail-engine/deploy/onboarding/api-reference.md)
@@ -47,6 +47,6 @@ Use these repo-native docs for supported operator workflows:
 
 ## Current scope
 
-Guard Rail is focused on the runtime and its pilot deployment story. It is intentionally not framed here as a full SaaS platform, management console, or multi-environment control plane.
+Guard Rail is focused on the runtime and its beta deployment story. It is intentionally not framed here as a full SaaS platform, management console, or multi-environment control plane.
 
-For runtime surfaces and repo-local evaluation, start with the pilot onboarding docs above.
+For runtime surfaces and repo-local evaluation, start with the beta onboarding docs above.

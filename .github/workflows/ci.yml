@@ -192,5 +192,8 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: Site tests
+        run: npm run test:site
+
       - name: Build
         run: npm run build

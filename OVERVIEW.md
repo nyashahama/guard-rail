@@ -4,14 +4,14 @@
 
 This repository contains two distinct surfaces:
 
-- `guard-rail-engine/` is the runtime. It is the container-first Rust service that enforces route and policy rules, persists audit and replay data, and exposes the operational endpoints used in the pilot deployment.
+- `guard-rail-engine/` is the runtime. It is the container-first Rust service that enforces route and policy rules, persists audit and replay data, and exposes the operational endpoints used in the beta deployment.
 - `app/` is the marketing site. It presents the product story, but it is not part of the control plane and does not participate in request enforcement.
 
 That split matters operationally: the landing page can change independently of the runtime, while the runtime remains the source of truth for request handling, policy enforcement, and execution records.
 
 ## Current Product Shape
 
-Guard Rail is a policy enforcement runtime for internal API traffic. The current implementation is centered on a pilot deployment that evaluates a request before forwarding it to an upstream API.
+Guard Rail is a beta policy enforcement runtime for internal API traffic. The current implementation is centered on a beta deployment that evaluates a request before forwarding it to an upstream API.
 
 The runtime currently exposes these surfaces:
 - route execution for `POST /v1/execute/{route_id}`-style traffic
@@ -20,7 +20,7 @@ The runtime currently exposes these surfaces:
 - audit logging and audit persistence for every execution
 - replay capture and replay persistence for later investigation
 - readiness and metrics endpoints for health and operations
-- admin and maintenance commands for the pilot deployment path
+- admin and maintenance commands for the beta deployment path
 
 The important boundary is that Guard Rail governs the request path, not the upstream application itself.
 
@@ -37,7 +37,7 @@ That model reflects the current runtime shape:
 - config is mounted in from disk
 - secrets are injected through the environment
 
-This is the deployment path the docs and verification package are aligned to. Other packaging choices may exist in the repo, but they are not the recommended pilot path.
+This is the deployment path the docs and verification package are aligned to. Other packaging choices may exist in the repo, but they are not the recommended beta path.
 
 ## Request Flow
 
@@ -68,11 +68,11 @@ Every execution is recorded so operators can reconstruct what happened, why a re
 
 ### Replay
 
-Replay artifacts capture the request context needed for later analysis and verification. In the current pilot posture, replay is an operational record, not a productized end-user workflow.
+Replay artifacts capture the request context needed for later analysis and verification. In the current beta posture, replay is an operational record, not a productized end-user workflow.
 
 ### Runtime Health
 
-Readiness and metrics are part of the current operational contract. They exist so the runtime can be deployed behind a proxy/LB and observed like a production service, even though the product itself is still in pilot posture.
+Readiness and metrics are part of the current operational contract. They exist so the runtime can be deployed behind a proxy/LB and observed like a production service, even though the product itself is still in beta posture.
 
 ## Data and Operations
 
@@ -80,13 +80,13 @@ The operator-facing docs are split by concern:
 
 - `guard-rail-engine/deploy/container/DATA_OPERATIONS.md` covers cleanup, backup, restore, and rollback.
 - `guard-rail-engine/deploy/observability/` covers metrics, alerts, dashboards, and runbooks.
-- `guard-rail-engine/deploy/verification/README.md` covers the pilot verification suite and its expected scenarios.
+- `guard-rail-engine/deploy/verification/README.md` covers the beta verification suite and its expected scenarios.
 
 Those documents are the authoritative operational references for the current runtime posture.
 
 ## Verification-Backed Position
 
-This repo should be described as a verified pilot runtime, not as a roadmap-era platform promise.
+This repo should be described as a verified beta runtime, not as a roadmap-era platform promise.
 
 That means the docs should stay aligned with what is actually covered by the current deployment and verification package:
 - containerized runtime deployment
