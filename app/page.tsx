@@ -62,7 +62,7 @@ export default function Home() {
 
       {/* ── Corner Tag ── */}
       <div className="hidden sm:block fixed right-7 bottom-6 z-50 font-mono text-[9px] tracking-[0.2em] uppercase text-white/25 mix-blend-difference">
-        Pilot / Policy Runtime
+        Beta / Policy Runtime
       </div>
 
       <Nav />

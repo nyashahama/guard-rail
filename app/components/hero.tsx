@@ -10,7 +10,7 @@ export function Hero() {
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 border border-cyan/30 bg-cyan/5 rounded-full mb-8 sm:mb-10 w-fit">
             <span className="w-1.5 h-1.5 bg-cyan rounded-full pulse-dot" style={{ boxShadow: "0 0 8px var(--cyan)" }} />
             <span className="font-mono text-[10px] tracking-[0.15em] uppercase text-cyan">
-              Verified pilot runtime for internal APIs
+              Verified beta runtime for internal APIs
             </span>
           </div>
 
@@ -29,7 +29,7 @@ export function Hero() {
 
           <p className="text-[17px] sm:text-[19px] text-white/55 leading-[1.65] font-light max-w-[480px] mb-9 sm:mb-11">
             A policy enforcement runtime that inspects requests before they reach
-            upstream APIs. Built for the current pilot deployment path and the
+            upstream APIs. Built for the current beta deployment path and the
             operational controls that go with it.
           </p>
 
@@ -46,7 +46,7 @@ export function Hero() {
                 (e.currentTarget as HTMLElement).style.boxShadow = "none";
               }}
             >
-              Request Pilot Access
+              Request Beta Access
               <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 17L17 7M17 7H7M17 7v10" />
               </svg>
@@ -113,7 +113,7 @@ export function Hero() {
             style={{ background: "rgba(12,12,16,0.7)" }}
           >
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-cyan" style={{ boxShadow: "0 0 6px var(--cyan)" }} />
-            <span className="text-white/60">Pilot-verified runtime path</span>
+            <span className="text-white/60">Beta-verified runtime path</span>
           </div>
         </div>
       </div>

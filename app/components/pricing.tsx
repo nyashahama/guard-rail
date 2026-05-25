@@ -79,7 +79,7 @@ export function Pricing() {
                 href="#pilot-contact"
                 className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase px-3.5 py-3.5 text-center no-underline block transition-all duration-300 border border-white/15 text-white/50 hover:border-white/40 hover:text-white"
               >
-                Start Pilot
+                Start Beta
               </a>
             </div>
 
@@ -221,7 +221,7 @@ export function Pricing() {
                   href={docsUrl}
                   className="font-mono text-[12px] tracking-[0.1em] uppercase text-white/70 border border-white/15 px-5 py-3 no-underline hover:text-white hover:border-white/40 transition-all duration-200"
                 >
-                  Pilot Docs
+                  Beta Docs
                 </a>
               </div>
             </div>

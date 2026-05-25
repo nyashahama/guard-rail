@@ -41,8 +41,8 @@ export function Nav() {
           href="#pilot-contact"
           className="border border-white/20 px-3 py-2 font-mono text-[10px] font-bold tracking-[0.1em] text-white uppercase no-underline transition-all duration-300 hover:bg-white hover:text-black sm:px-5 sm:py-2.5 sm:text-[11px]"
         >
-          <span className="sm:hidden">Access</span>
-          <span className="hidden sm:inline">Get Access</span>
+          <span className="sm:hidden">Beta</span>
+          <span className="hidden sm:inline">Get Beta Access</span>
         </a>
       </div>
     </nav>
